@@ -107,20 +107,15 @@ def evaluate_final_stack(stack: Stack, log: list[str]) -> None:
         raise FinalStackInvalid('\n'.join(log))
 
 
-def script_eval(tx: Transaction, spent_tx: BaseTransaction, *, input_index: int) -> 'ScriptContext':
-    """Evaluates the output script and input data according to
-    a very limited subset of Bitcoin's scripting language.
+def script_eval(*, tx: Transaction, spent_tx: BaseTransaction, input_index: int) -> 'ScriptContext':
+    """
+    Evaluates the output script and input data according to a very limited subset of Bitcoin's scripting language.
+    Raises ScriptError if script verification fails
 
-    :param tx: the transaction being validated, the 'owner' of the input data
-    :type tx: :py:class:`hathor.transaction.Transaction`
-
-    :param txin: transaction input being evaluated
-    :type txin: :py:class:`hathor.transaction.TxInput`
-
-    :param spent_tx: the transaction referenced by the input
-    :type spent_tx: :py:class:`hathor.transaction.BaseTransaction`
-
-    :raises ScriptError: if script verification fails
+    Args:
+        tx: the transaction being validated, the 'owner' of the input data
+        spent_tx: the transaction referenced by the input
+        input_index: index of the transaction input being evaluated
     """
     extras = ScriptExtras(tx=tx, input_index=input_index, spent_tx=spent_tx)
     input_data = extras.txin.data

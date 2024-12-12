@@ -150,12 +150,12 @@ class TransactionVerifier:
     ) -> ScriptContext:
         """
         :type tx: Transaction
-        :type input_tx: TxInput
         :type spent_tx: Transaction
+        :type input_index: int
         """
         from hathor.transaction.scripts import script_eval
         try:
-            return script_eval(tx, spent_tx, input_index=input_index)
+            return script_eval(tx=tx, spent_tx=spent_tx, input_index=input_index)
         except ScriptError as e:
             raise InvalidInputData(e) from e
 

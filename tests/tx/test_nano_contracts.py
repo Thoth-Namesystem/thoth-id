@@ -38,4 +38,4 @@ class NanoContracts(unittest.TestCase):
         txin = TxInput(b'aa', 0, input_data)
         spent_tx = Transaction(hash=b'aa', outputs=[TxOutput(20, script)])
         tx = Transaction(inputs=[txin], outputs=[TxOutput(20, P2PKH.create_output_script(address))])
-        script_eval(tx, spent_tx, input_index=0)
+        script_eval(tx=tx, spent_tx=spent_tx, input_index=0)
