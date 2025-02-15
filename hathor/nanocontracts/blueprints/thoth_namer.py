@@ -48,7 +48,7 @@ class ThothNamer(Blueprint):
     
     # State variables
     domain: str  # Base domain (e.g., "htr")
-    names: Dict[str, NameRegistry]  # Mapping of names to owner addresses
+    names: Dict[str, dict]  # Mapping of names to owner addresses
     dev_address: Address  # Developer address for receiving fees
     fee: Amount  # Fee for registering a name
     total_fee: Amount  # Total fees collected
@@ -80,7 +80,7 @@ class ThothNamer(Blueprint):
         if action.amount < self.fee:
             raise NCFail("Insufficient fee")
             
-        self.names[name] = NameRegistry(owner_address=ctx.address, resolving_address=ctx.address)
+        self.names[name] = dict(NameRegistry(owner_address=ctx.address, resolving_address=ctx.address))
         self.total_fee += self.fee
     
     @public
@@ -109,7 +109,7 @@ class ThothNamer(Blueprint):
         if self.names[name].owner_address != ctx.address:
             raise NCFail("Only name owner can transfer")
             
-        self.names[name].update_owner_address(new_owner_address)
+        self.names[name]['owner_address'] = ctx.address
     
     @view
     def resolve_name(self, name: str) -> Address:
@@ -117,7 +117,7 @@ class ThothNamer(Blueprint):
         if not self.check_name_existence(name):
             raise NCFail("Name not registered")
             
-        return self.names[name].resolving_address
+        return self.names[name]['resolving_address']
     
     @view
     def validate_name(self, name: str) -> bool:
