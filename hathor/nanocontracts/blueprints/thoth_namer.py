@@ -48,7 +48,7 @@ class ThothNamer(Blueprint):
     
     # State variables
     domain: str  # Base domain (e.g., "htr")
-    names: Dict[str, dict]  # Mapping of names to owner addresses
+    names: Dict[str, dict[str, Address]]  # Mapping of names to owner addresses
     dev_address: Address  # Developer address for receiving fees
     fee: Amount  # Fee for registering a name
     total_fee: Amount  # Total fees collected
@@ -80,7 +80,10 @@ class ThothNamer(Blueprint):
         if action.amount < self.fee:
             raise NCFail("Insufficient fee")
             
-        self.names[name] = dict(NameRegistry(owner_address=ctx.address, resolving_address=ctx.address))
+        self.names[name] = {
+            "owner_address": self.owner_address,
+            "resolving_address": self.resolving_address
+        }
         self.total_fee += self.fee
     
     @public
