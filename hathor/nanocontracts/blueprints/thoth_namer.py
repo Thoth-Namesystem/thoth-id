@@ -3,44 +3,44 @@ from hathor.crypto.util import get_address_b58_from_bytes
 from hathor.nanocontracts.blueprint import Blueprint
 from hathor.nanocontracts.context import Context
 from hathor.nanocontracts.exception import NCFail
-from hathor.nanocontracts.types import Address, Amount, public, view
+from hathor.nanocontracts.types import Address, Amount, NCAction, NCActionType, public, view
 
-class NameRegistry:
-    def __init__(self, owner_address: Address, resolving_address: Address):
-        self.owner_address = owner_address
-        self.resolving_address = resolving_address
-        self.metadata = {}  # Dictionary to store personalized information
+# class NameRegistry:
+#     def __init__(self, owner_address: Address, resolving_address: Address):
+#         self.owner_address = owner_address
+#         self.resolving_address = resolving_address
+#         self.metadata = {}  # Dictionary to store personalized information
 
-    def update_owner_address(self, new_owner_address: Address):
-        """Update the resolving address."""
-        self.owner_address = new_owner_address
+#     def update_owner_address(self, new_owner_address: Address):
+#         """Update the resolving address."""
+#         self.owner_address = new_owner_address
 
-    def update_resolving_address(self, new_resolving_address: Address):
-        """Update the resolving address."""
-        self.resolving_address = new_resolving_address
+#     def update_resolving_address(self, new_resolving_address: Address):
+#         """Update the resolving address."""
+#         self.resolving_address = new_resolving_address
 
-    def add_metadata(self, key, value):
-        """Add personalized metadata, such as social media or contact info."""
-        self.metadata[key] = value
+#     def add_metadata(self, key, value):
+#         """Add personalized metadata, such as social media or contact info."""
+#         self.metadata[key] = value
 
-    def get_metadata(self, key):
-        """Retrieve metadata by key."""
-        return self.metadata.get(key, "Not found")
+#     def get_metadata(self, key):
+#         """Retrieve metadata by key."""
+#         return self.metadata.get(key, "Not found")
 
-    def remove_metadata(self, key):
-        """Remove metadata by key."""
-        if key in self.metadata:
-            del self.metadata[key]
+#     def remove_metadata(self, key):
+#         """Remove metadata by key."""
+#         if key in self.metadata:
+#             del self.metadata[key]
 
-    def __str__(self):
-        return str(dict(self))
+#     def __str__(self):
+#         return str(dict(self))
     
-    def __dict__(self):
-        return {
-            "owner_address": self.owner_address,
-            "resolving_address": self.resolving_address,
-            "metadata": self.metadata
-        }
+#     def __dict__(self):
+#         return {
+#             "owner_address": self.owner_address,
+#             "resolving_address": self.resolving_address,
+#             "metadata": self.metadata
+#         }
 
 class NameNotFound(NCFail):
     pass
@@ -69,6 +69,12 @@ class InvalidFee(NCFail):
 class InvalidDomain(NCFail):
     pass
 
+class TooManyActions(NCFail):
+    pass
+
+class InvalidToken(NCFail):
+    pass
+
 class ThothNamer(Blueprint):
     """A name service blueprint for registering and managing domain names."""
     
@@ -92,6 +98,17 @@ class ThothNamer(Blueprint):
         self.total_fee = 0
         self.dev_address = ctx.address
     
+    def _get_action(self, ctx: Context) -> NCAction:
+        """Return the only action available; fails otherwise."""
+        if len(ctx.actions) != 1:
+            raise TooManyActions('only one action supported')
+        action = next(iter(ctx.actions.values()))
+        if ctx.address != self.dev_address and action.type == NCActionType.WITHDRAWAL:
+            raise WithdrawalNotAllowed('only dev can withdraw')
+        if action.token_uid == b'00':
+            raise InvalidToken(f'token different from HTR')
+        return action
+
     @public
     def create_name(self, ctx: Context, name: str) -> None:
         """Register a new name under the domain."""
@@ -101,7 +118,8 @@ class ThothNamer(Blueprint):
             raise NameAlreadyExists
             
         # Verify fee payment
-        action = next(iter(ctx.actions.values()))
+        #action = next(iter(ctx.actions.values()))
+        action = self._get_action(ctx)
         if action.amount < self.fee:
             raise InsufficientBalance("Deposit amount is less than fee.")
             
@@ -147,11 +165,11 @@ class ThothNamer(Blueprint):
         if self.names[name]["owner_address"] != ctx.address:
             raise NotAuthorized
         
-        self.log.info(f'ctx: {ctx.address}. owner: {self.names[name]['owner_address']}. resolving:\
-                      new_resolving_address')
+        self.log.info(f"ctx: {ctx.address}. owner: {self.names[name]['owner_address']}. resolving:\
+                      new_resolving_address")
         self.names[name]['resolving_address'] = new_resolving_address
-        self.log.info(f'ctx: {ctx.address}. owner: {self.names[name]['owner_address']}. resolving:\
-                      new_resolving_address')
+        self.log.info(f"ctx: {ctx.address}. owner: {self.names[name]['owner_address']}. resolving:\
+                      new_resolving_address")
     
     @view
     def resolve_name(self, name: str) -> str:
