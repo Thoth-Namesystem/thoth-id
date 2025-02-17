@@ -1,4 +1,5 @@
 from typing import Dict
+from hathor.crypto.util import get_address_b58_from_bytes
 from hathor.nanocontracts.blueprint import Blueprint
 from hathor.nanocontracts.context import Context
 from hathor.nanocontracts.exception import NCFail
@@ -41,7 +42,32 @@ class NameRegistry:
             "metadata": self.metadata
         }
 
+class NameNotFound(NCFail):
+    pass
 
+class NameAlreadyExists(NCFail):
+    pass
+
+class NotAuthorized(NCFail):
+    pass
+
+class InvalidNameFormat(NCFail):
+    pass
+
+class WithdrawalNotAllowed(NCFail):
+    pass
+
+class DepositNotAllowed(NCFail):
+    pass
+
+class InsufficientBalance(NCFail):
+    pass
+
+class InvalidFee(NCFail):
+    pass
+
+class InvalidDomain(NCFail):
+    pass
 
 class ThothNamer(Blueprint):
     """A name service blueprint for registering and managing domain names."""
@@ -57,9 +83,9 @@ class ThothNamer(Blueprint):
     def initialize(self, ctx: Context, domain: str, fee: Amount) -> None:
         """Initialize the name service with a base domain and registration fee."""
         if not domain:
-            raise NCFail("Domain cannot be empty")
+            raise InvalidDomain("Domain cannot be empty.")
         if fee <= 0:
-            raise NCFail("Fee must be a postive number")
+            raise InvalidFee("Fee must be a positive value.")
             
         self.domain = domain
         self.fee = fee
@@ -70,14 +96,14 @@ class ThothNamer(Blueprint):
     def create_name(self, ctx: Context, name: str) -> None:
         """Register a new name under the domain."""
         if not self.validate_name(name):
-            raise NCFail("Invalid name format")
+            raise InvalidNameFormat
         if self.check_name_existence(name):
-            raise NCFail("Name already registered")
+            raise NameAlreadyExists
             
         # Verify fee payment
         action = next(iter(ctx.actions.values()))
         if action.amount < self.fee:
-            raise NCFail("Insufficient fee")
+            raise InsufficientBalance("Deposit amount is less than fee.")
             
         self.names[name] = {
             "owner_address": ctx.address,
@@ -89,9 +115,9 @@ class ThothNamer(Blueprint):
     def change_fee(self, ctx: Context, fee: Amount) -> None:
         """Change the registration fee."""
         if ctx.address != self.dev_address:
-            raise NCFail("Only dev can change fee")
+            raise NotAuthorized("Only dev can change fee.")
         if fee <= 0:
-            raise NCFail("Fee must be a postive number")
+            raise InvalidFee("Fee must be a positive value.")
             
         self.fee = fee
     
@@ -99,7 +125,7 @@ class ThothNamer(Blueprint):
     def change_dev_address(self, ctx: Context, new_dev_address: Address) -> None:
         """Change the developer address."""
         if ctx.address != self.dev_address:
-            raise NCFail("Only dev can change dev address")
+            raise NotAuthorized
             
         self.dev_address = new_dev_address
     
@@ -107,19 +133,33 @@ class ThothNamer(Blueprint):
     def change_name_owner(self, ctx: Context, name: str, new_owner_address: Address) -> None:
         """Transfer ownership of a name to a new address."""
         if not self.check_name_existence(name):
-            raise NCFail("Name not registered")
-        if self.names[name].owner_address != ctx.address:
-            raise NCFail("Only name owner can transfer")
+            raise NameNotFound
+        if self.names[name]['owner_address'] != ctx.address:
+            raise NotAuthorized
             
-        self.names[name]['owner_address'] = ctx.address
+        self.names[name]['owner_address'] = new_owner_address
+
+    @public
+    def change_resolving_address(self, ctx: Context, name: str, new_resolving_address: Address) -> None:
+        """Change the resolvign address of a name when authorized."""
+        if not self.check_name_existence(name):
+            raise NameNotFound
+        if self.names[name]["owner_address"] != ctx.address:
+            raise NotAuthorized
+        
+        self.log.info(f'ctx: {ctx.address}. owner: {self.names[name]['owner_address']}. resolving:\
+                      new_resolving_address')
+        self.names[name]['resolving_address'] = new_resolving_address
+        self.log.info(f'ctx: {ctx.address}. owner: {self.names[name]['owner_address']}. resolving:\
+                      new_resolving_address')
     
     @view
-    def resolve_name(self, name: str) -> Address:
+    def resolve_name(self, name: str) -> str:
         """Get the address associated with a name."""
         if not self.check_name_existence(name):
-            raise NCFail("Name not registered")
+            raise NameNotFound
             
-        return self.names[name]['resolving_address']
+        return get_address_b58_from_bytes(self.names[name]['resolving_address'])
     
     @view
     def validate_name(self, name: str) -> bool:
@@ -146,3 +186,16 @@ class ThothNamer(Blueprint):
     @view
     def check_name_existence(self, name: str) -> bool:
         return name in self.names
+    
+    @view
+    def get_name_owner(self, name: str) -> Address:
+        """Get the name owner's address."""
+        if name not in self.names:
+            raise NameNotFound
+        
+        return self.names[name]['owner_address']
+    
+    @view
+    def get_dev_address(self) -> Address:
+        """Get the developer's address."""
+        return get_address_b58_from_bytes(self.dev_address)
