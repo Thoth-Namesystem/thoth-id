@@ -65,7 +65,6 @@ class ThothNamer(Blueprint):
         self.fee = fee
         self.total_fee = 0
         self.dev_address = ctx.address
-        self.names = {}
     
     @public
     def create_name(self, ctx: Context, name: str) -> None:
@@ -81,8 +80,8 @@ class ThothNamer(Blueprint):
             raise NCFail("Insufficient fee")
             
         self.names[name] = {
-            "owner_address": self.owner_address,
-            "resolving_address": self.resolving_address
+            "owner_address": ctx.address,
+            "resolving_address": ctx.address
         }
         self.total_fee += self.fee
     
