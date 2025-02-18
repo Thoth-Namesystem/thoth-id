@@ -80,7 +80,7 @@ class ThothNamer(Blueprint):
     
     # State variables
     domain: str  # Base domain (e.g., "htr")
-    names: Dict[str, dict[str, Address]]  # Mapping of names to owner addresses
+    names: Dict[str, dict[str, Address]] # Mapping of names to owner addresses TODO: fix changing address and rollback to Dict[str, dict[str, str]]
     dev_address: Address  # Developer address for receiving fees
     fee: Amount  # Fee for registering a name
     total_fee: Amount  # Total fees collected
@@ -98,17 +98,6 @@ class ThothNamer(Blueprint):
         self.total_fee = 0
         self.dev_address = ctx.address
     
-    def _get_action(self, ctx: Context) -> NCAction:
-        """Return the only action available; fails otherwise."""
-        if len(ctx.actions) != 1:
-            raise TooManyActions('only one action supported')
-        action = next(iter(ctx.actions.values()))
-        if ctx.address != self.dev_address and action.type == NCActionType.WITHDRAWAL:
-            raise WithdrawalNotAllowed('only dev can withdraw')
-        if action.token_uid == b'00':
-            raise InvalidToken(f'token different from HTR')
-        return action
-
     @public
     def create_name(self, ctx: Context, name: str) -> None:
         """Register a new name under the domain."""
@@ -154,8 +143,8 @@ class ThothNamer(Blueprint):
             raise NameNotFound
         if self.names[name]['owner_address'] != ctx.address:
             raise NotAuthorized
-            
-        self.names[name]['owner_address'] = new_owner_address
+        
+        self.names[name] = self._update_owner_address(name, new_owner_address)
 
     @public
     def change_resolving_address(self, ctx: Context, name: str, new_resolving_address: Address) -> None:
@@ -165,11 +154,7 @@ class ThothNamer(Blueprint):
         if self.names[name]["owner_address"] != ctx.address:
             raise NotAuthorized
         
-        self.log.info(f"ctx: {ctx.address}. owner: {self.names[name]['owner_address']}. resolving:\
-                      new_resolving_address")
-        self.names[name]['resolving_address'] = new_resolving_address
-        self.log.info(f"ctx: {ctx.address}. owner: {self.names[name]['owner_address']}. resolving:\
-                      new_resolving_address")
+        self.names[name] = self._update_resolving_address(name, new_resolving_address)
     
     @view
     def resolve_name(self, name: str) -> str:
@@ -217,3 +202,32 @@ class ThothNamer(Blueprint):
     def get_dev_address(self) -> Address:
         """Get the developer's address."""
         return get_address_b58_from_bytes(self.dev_address)
+    
+    def _get_action(self, ctx: Context) -> NCAction:
+        """Return the only action available; fails otherwise."""
+        if len(ctx.actions) != 1:
+            raise TooManyActions('only one action supported')
+        action = next(iter(ctx.actions.values()))
+        if ctx.address != self.dev_address and action.type == NCActionType.WITHDRAWAL:
+            raise WithdrawalNotAllowed('only dev can withdraw')
+        if action.token_uid == b'00':
+            raise InvalidToken(f'token different from HTR')
+        return action
+    
+    def _update_resolving_address(self, name, new_resolving_address):
+        """Get and update a resoling address. Returns a new dict with updated values."""
+        temp = self.names[name]
+        temp.update({
+            'resolving_address': new_resolving_address
+        })
+
+        return temp
+    
+    def _update_owner_address(self, name, new_owner_address):
+        """Get and update a owner address. Returns a new dict with updated values."""
+        temp = self.names[name]
+        temp.update({
+            'owner_address': new_owner_address
+        })
+
+        return temp
