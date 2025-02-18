@@ -206,12 +206,12 @@ class ThothNamer(Blueprint):
     def _get_action(self, ctx: Context) -> NCAction:
         """Return the only action available; fails otherwise."""
         if len(ctx.actions) != 1:
-            raise TooManyActions('only one action supported')
+            raise TooManyActions('Only one action supported.')
         action = next(iter(ctx.actions.values()))
         if ctx.address != self.dev_address and action.type == NCActionType.WITHDRAWAL:
-            raise WithdrawalNotAllowed('only dev can withdraw')
+            raise WithdrawalNotAllowed('Only dev can withdraw.')
         if action.token_uid == b'00':
-            raise InvalidToken(f'token different from HTR')
+            raise InvalidToken(f'Token different from HTR.')
         return action
     
     def _update_resolving_address(self, name, new_resolving_address):
