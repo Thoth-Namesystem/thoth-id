@@ -203,6 +203,11 @@ class ThothNamer(Blueprint):
         """Get the developer's address."""
         return get_address_b58_from_bytes(self.dev_address)
     
+    @view
+    def get_contract_domain(self) -> str:
+        """Get the contract domain."""
+        return self.domain
+
     def _get_action(self, ctx: Context) -> NCAction:
         """Return the only action available; fails otherwise."""
         if len(ctx.actions) != 1:
