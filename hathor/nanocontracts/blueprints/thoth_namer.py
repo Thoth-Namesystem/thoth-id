@@ -196,7 +196,7 @@ class ThothNamer(Blueprint):
         if name not in self.names:
             raise NameNotFound
         
-        return self.names[name]['owner_address']
+        return get_address_b58_from_bytes(self.names[name]['owner_address'])
     
     @view
     def get_dev_address(self) -> Address:
