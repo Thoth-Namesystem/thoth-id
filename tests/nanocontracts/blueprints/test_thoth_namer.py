@@ -43,18 +43,6 @@ class NCThothNamerBlueprintTestCase(unittest.TestCase):
         self.runner = TestRunner(self.manager.tx_storage, nc_storage_factory, block_trie)
         self.nc_storage = self.runner.get_storage(self.nc_id)
 
-    def _get_any_tx(self):
-        genesis = self.manager.tx_storage.get_all_genesis()
-        tx = list(genesis)[0]
-        return tx
-
-    def _get_any_address(self):
-        password = os.urandom(12)
-        key = KeyPair.create(password)
-        address_b58 = key.address
-        address_bytes = decode_address(address_b58)
-        return address_bytes, key
-
     def get_current_timestamp(self):
         return int(self.clock.seconds())
 
@@ -76,18 +64,6 @@ class NCThothNamerBlueprintTestCase(unittest.TestCase):
         self.assertEqual(storage.get('domain'), "htr")
         self.assertEqual(storage.get('fee'), self.registration_fee)
         self.assertEqual(storage.get('dev_address'), self.dev_address)
-
-    def _register_name(self, name: str, amount: int, address: Optional[Address] = None) -> Address:
-        if address is None:
-            address_bytes, _ = self._get_any_address()
-        else:
-            address_bytes = address
-            
-        tx = self._get_any_tx()
-        action = NCAction(NCActionType.DEPOSIT, self.token_uid, amount)
-        context = Context([action], tx, address_bytes, timestamp=self.get_current_timestamp())
-        self.runner.call_public_method(self.nc_id, 'create_name', context, name)
-        return address_bytes
 
     def test_basic_flow(self) -> None:
         self.initialize_contract()
@@ -205,3 +181,27 @@ class NCThothNamerBlueprintTestCase(unittest.TestCase):
         
         with self.assertRaises(InvalidToken):
             self.runner.call_public_method(self.nc_id, 'create_name', context, "testname")
+    
+    def _get_any_tx(self):
+        genesis = self.manager.tx_storage.get_all_genesis()
+        tx = list(genesis)[0]
+        return tx
+    
+    def _get_any_address(self):
+        password = os.urandom(12)
+        key = KeyPair.create(password)
+        address_b58 = key.address
+        address_bytes = decode_address(address_b58)
+        return address_bytes, key
+    
+    def _register_name(self, name: str, amount: int, address: Optional[Address] = None) -> Address:
+        if address is None:
+            address_bytes, _ = self._get_any_address()
+        else:
+            address_bytes = address
+            
+        tx = self._get_any_tx()
+        action = NCAction(NCActionType.DEPOSIT, self.token_uid, amount)
+        context = Context([action], tx, address_bytes, timestamp=self.get_current_timestamp())
+        self.runner.call_public_method(self.nc_id, 'create_name', context, name)
+        return address_bytes
