@@ -8,7 +8,7 @@ from hathor.nanocontracts.storage.patricia_trie import PatriciaTrie
 from hathor.nanocontracts.context import Context
 from hathor.nanocontracts.types import Address, Amount, ContractId, NCAction, NCActionType
 from hathor.wallet import KeyPair
-from tests import unittest
+from tests.nanocontracts.blueprints.unittest import BlueprintTestCase
 from tests.nanocontracts.utils import TestRunner
 
 from hathor.nanocontracts.blueprints.thoth_namer import (
@@ -28,7 +28,7 @@ from hathor.nanocontracts.blueprints.thoth_namer import (
 
 settings = HathorSettings()
 
-class NCThothNamerBlueprintTestCase(unittest.TestCase):
+class NCThothNamerBlueprintTestCase(BlueprintTestCase):
     use_memory_storage = True
 
     def setUp(self):
