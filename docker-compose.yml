@@ -1,0 +1,56 @@
+version: '3.8'
+services:
+ node:
+  build:
+   context: .
+   dockerfile: Dockerfile
+  ports:
+   - "40403:40403"
+   - "8080:8080"
+  volumes:
+   - ./hathor/nanocontracts/blueprints:/app/hathor/nanocontracts/blueprints
+   - ./hathor/conf/nano_testnet.yml:/app/hathor/conf/nano_testnet.yml
+  command: ["run_node", "--nano-testnet","--temp-data", "--wallet-index", "--status", "8080", "--nc-indices", "--allow-mining-without-peers"]
+ cpuminer:
+  image: hathornetwork/cpuminer
+  command: "-t 1 --coinbase-addr Wg1kXYsNGDdjYpJMHpgMx5QYvACRHCdLQu -a sha256d -o stratum+tcp://txstratum:5001 --retry-pause 5"
+  depends_on:
+   - node
+ txstratum:
+  image: hathornetwork/tx-mining-service
+  restart: always
+  entrypoint: ["python","-m","main"]
+  command: "http://172.17.0.1:8080/ --api-port 8081 --stratum-port 5001 --testnet"
+  depends_on:
+   - node
+  ports:
+   - "8081:8081"
+   - "5001:5001"
+ wallet-master:
+  image: hathornetwork/hathor-wallet-headless
+  ports:
+   - "8000:8000"
+  command: "npm start"
+  depends_on:
+   - node
+  environment:
+   - HEADLESS_API_KEY=_YOUR_HEADLESS_API_KEY_
+   - HEADLESS_SEEDS=genesis
+   - HEADLESS_SEED_GENESIS=infant elegant juice school mule drama census kangaroo grain roof spatial mom young refuse enact beef machine maid roof prosper prosper pole height boat
+   - HEADLESS_NETWORK=testnet
+   - HEADLESS_SERVER=http://node:8080/v1a/
+   - HEADLESS_TX_MINING_URL=http://txstratum:8081/
+ wallet-users:
+  image: hathornetwork/hathor-wallet-headless
+  ports:
+   - "8001:8001"
+  command: "npm start"
+  depends_on:
+   - node
+  environment:
+   - HEADLESS_API_KEY=_YOUR_HEADLESS_API_KEY_
+   - HEADLESS_HTTP_PORT=8001
+   - HEADLESS_SEED_DEFAULT=ring menu empty sting alpha little guard stumble airport during brother inflict during shoot load actress forest horn ability ritual retire fuel grunt desire
+   - HEADLESS_NETWORK=testnet
+   - HEADLESS_SERVER=http://node:8080/v1a/
+   - HEADLESS_TX_MINING_URL=http://txstratum:8081/
