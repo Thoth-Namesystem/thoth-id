@@ -14,8 +14,8 @@
 
 from typing import TYPE_CHECKING, Type
 
-from hathor.nanocontracts.blueprints.bet import Bet
-from hathor.nanocontracts.blueprints.dozer_pool_v1 import Dozer_Pool_v1
+#from hathor.nanocontracts.blueprints.bet import Bet
+#from hathor.nanocontracts.blueprints.dozer_pool_v1 import Dozer_Pool_v1
 from hathor.nanocontracts.blueprints.thoth_namer import ThothNamer
 
 if TYPE_CHECKING:
@@ -23,8 +23,8 @@ if TYPE_CHECKING:
 
 
 _blueprints_mapper: dict[str, Type['Blueprint']] = {
-    'Bet': Bet,
-    'Dozer_Pool_v1': Dozer_Pool_v1,
+#    'Bet': Bet,
+#    'Dozer_Pool_v1': Dozer_Pool_v1,
     'ThothNamer': ThothNamer,
 }
 
