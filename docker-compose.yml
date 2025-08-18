@@ -18,6 +18,7 @@ services:
    - node
  txstratum:
   image: hathornetwork/tx-mining-service
+  platform: linux/amd64
   restart: always
   entrypoint: ["python","-m","main"]
   command: "http://172.17.0.1:8080/ --api-port 8081 --stratum-port 5001 --testnet"
