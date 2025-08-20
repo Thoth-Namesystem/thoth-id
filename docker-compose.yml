@@ -10,7 +10,7 @@ services:
   volumes:
    - ./hathor/nanocontracts/blueprints:/app/hathor/nanocontracts/blueprints
    - ./hathor/conf/nano_testnet.yml:/app/hathor/conf/nano_testnet.yml
-  command: ["run_node", "--nano-testnet","--temp-data", "--wallet-index", "--status", "8080", "--nc-indices", "--allow-mining-without-peers"]
+  command: ["run_node", "--nano-testnet","--temp-data", "--wallet-index", "--status", "8080", "--nc-indexes", "--allow-mining-without-peers"]
  cpuminer:
   image: hathornetwork/cpuminer
   command: "-t 1 --coinbase-addr Wg1kXYsNGDdjYpJMHpgMx5QYvACRHCdLQu -a sha256d -o stratum+tcp://txstratum:5001 --retry-pause 5"

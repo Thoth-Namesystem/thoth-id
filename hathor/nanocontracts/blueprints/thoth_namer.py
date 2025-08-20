@@ -1,18 +1,16 @@
-from typing import Dict
+from typing import NamedTuple
 from datetime import datetime, timedelta
 from hathor.crypto.util import get_address_b58_from_bytes
 from hathor.nanocontracts.blueprint import Blueprint
 from hathor.nanocontracts.context import Context
 from hathor.nanocontracts.exception import NCFail
 from hathor.nanocontracts.types import Address, Amount, NCAction, NCActionType, TokenUid, public, view
-from hathor.transaction.token_creation_tx import TokenCreationTransaction
 
-class NameRecord:
+class NameRecord(NamedTuple):
     """Record for storing name data and NFT information"""
-    def __init__(self, nft_uid: TokenUid, owner_address: Address, data: Dict[str, any]):
-        self.nft_uid = nft_uid
-        self.owner_address = owner_address  # None means NFT is not deposited
-        self.data = data
+    nft_uid: TokenUid
+    owner_address: Address  # None means NFT is not deposited
+    data: dict[str, Address|datetime]
 
 # class NameRegistry:
 #     def __init__(self, owner_address: Address, resolving_address: Address):
@@ -56,7 +54,7 @@ class ThothNamer(Blueprint):
     
     # State variables
     domain: str  # Base domain (e.g., "htr")
-    registered_names: Dict[str, NameRecord]  # Mapping of names to NameRecord objects
+    registered_names: dict[str, NameRecord]  # Mapping of names to NameRecord objects
     dev_address: Address  # Developer address for receiving fees
     fee: Amount  # Fee for registering a name
     total_fee: Amount  # Total fees collected
@@ -65,9 +63,9 @@ class ThothNamer(Blueprint):
     def initialize(self, ctx: Context, domain: str, fee: Amount) -> None:
         """Initialize the name service with a base domain and registration fee."""
         if not domain:
-            raise InvalidDomain("Domain cannot be empty.")
+            raise InvalidDomain('Domain cannot be empty.')
         if fee <= 0:
-            raise InvalidFee("Fee must be a positive value.")
+            raise InvalidFee('Fee must be a positive value.')
             
         self.domain = domain
         self.fee = fee
@@ -95,8 +93,8 @@ class ThothNamer(Blueprint):
             nft_uid=nft_uid,
             owner_address=ctx.address,  # NFT starts in user's wallet
             data={
-                "resolving_address": ctx.address,
-                "expiration_date": expiration_date
+                'resolving_address': ctx.address,
+                'expiration_date': expiration_date
             }
         )
         self.total_fee += self.fee * years_of_access
@@ -117,7 +115,7 @@ class ThothNamer(Blueprint):
     @public
     def change_resolving_address(self, ctx: Context, name: str, new_resolving_address: Address) -> None:
         """Change the resolving address of a name when authorized."""
-        return self.set_data(ctx, name, "resolving_address", new_resolving_address)
+        return self.set_data(ctx, name, 'resolving_address', new_resolving_address)
     
     @public
     def deposit_nft(self, ctx: Context, name: str) -> None:
@@ -165,7 +163,7 @@ class ThothNamer(Blueprint):
         new_expiration = max(current_expiration, datetime.today()) + timedelta(days=years_of_access * 365)
         
         # Update expiration in record
-        record.data["expiration_date"] = new_expiration
+        record.data['expiration_date'] = new_expiration
         
         self.total_fee += self.fee * years_of_access
     
@@ -176,7 +174,7 @@ class ThothNamer(Blueprint):
         return self.registered_names[name].data['resolving_address']
     
     @view
-    def get_name_data(self, name: str) -> Dict[str, any]:
+    def get_name_data(self, name: str) -> dict[str, any]:
         """Get all data associated with a name."""
         if name not in self.registered_names:
             raise NameNotFound
@@ -191,7 +189,7 @@ class ThothNamer(Blueprint):
         
         record = self.registered_names[name]
         if record.owner_address:
-            raise InfoNotReliable("The token is not deposited on the contract, we can't say for sure who is the owner at this moment.")
+            raise InfoNotReliable("The token is not deposited on the contract, we can\'t say for sure who is the owner at this moment.")
 
         return get_address_b58_from_bytes(record.owner_address)
 
@@ -216,7 +214,7 @@ class ThothNamer(Blueprint):
             return False
             
         # Only allow lowercase letters, numbers, and hyphens
-        allowed_chars = set("abcdefghijklmnopqrstuvwxyz0123456789-")
+        allowed_chars = set('abcdefghijklmnopqrstuvwxyz0123456789-')
         if not all(c in allowed_chars for c in name):
             return False
             
@@ -239,7 +237,7 @@ class ThothNamer(Blueprint):
     def _mint_name_nft(self, name: str) -> TokenUid:
         """Mint a new NFT for the name and return its UID."""
         # Create NFT metadata
-        nft_name = f"{name}.{self.domain}"
+        nft_name = f'{name}.{self.domain}'
         
         token_uid = self.syscall.create_token(nft_name, nft_name, True, True)
         
@@ -307,7 +305,7 @@ class ThothNamer(Blueprint):
     def get_public_key(self) -> bytes:
         """Get the contract's public key."""
         # This should be implemented by the contract runtime
-        raise NotImplementedError("Contract public key access not implemented")
+        raise NotImplementedError('Contract public key access not implemented')
 
     def _get_action(self, ctx: Context) -> NCAction:
         """Return the only action available; fails otherwise."""
@@ -317,23 +315,23 @@ class ThothNamer(Blueprint):
         if ctx.address != self.dev_address and action.type == NCActionType.WITHDRAWAL:
             raise WithdrawalNotAllowed('Only dev can withdraw.')
         if action.token_uid == b'00':
-            raise InvalidToken(f'Token different from HTR.')
+            raise InvalidToken('Token different from HTR.')
         return action
     
     def _get_years_of_access(self, ctx: Context):
         """Return the number of years that have been bought."""
         action = self._get_action(ctx)
         if action.amount < self.fee:
-            raise InsufficientBalance("Deposit amount is less than fee.")
+            raise InsufficientBalance('Deposit amount is less than fee.')
         if action.amount % self.fee != 0:
-            raise InvalidAmount("Deposit amount must be a multiple of the fee.")
+            raise InvalidAmount('Deposit amount must be a multiple of the fee.')
 
         return action.amount // self.fee
 
     def _verify_not_expired(self, name: str) -> None:
         """Verify that a name hasn't expired, raise exception if it has."""
         if self._check_name_expired(name):
-            raise NameExpired("Name registration has expired")
+            raise NameExpired('Name registration has expired')
 
     def _check_name_expired(self, name: str) -> bool:
         """Check if a name registration has expired."""
