@@ -60,23 +60,27 @@ class ThothNamer(Blueprint):
     domain: str  # Base domain (e.g., "htr")
     registered_names: dict[str, NameRecord]  # Mapping of names to NameRecord objects
     dev_address: Address  # Developer address for receiving fees
-    fee: Amount  # Fee for registering a name
+    base_fee: Amount  # Base fee for registering a name
     total_fee: Amount  # Total fees collected
+    fee_multiplier: dict[int, int]
 
     @public
-    def initialize(self, ctx: Context, domain: str, fee: Amount) -> None:
+    def initialize(self, ctx: Context, domain: str, base_fee: Amount) -> None:
         """Initialize the name service with a base domain and registration fee."""
         if not domain:
             raise InvalidDomain('Domain cannot be empty.')
-        if fee <= 0:
+        if base_fee <= 0:
             raise InvalidFee('Fee must be a positive value.')
 
         self.domain = domain
-        self.fee = fee
+        self.base_fee = base_fee
         self.total_fee = 0
         self.dev_address = ctx.caller_id
+        self.fee_multiplier[3] = 20
+        self.fee_multiplier[4] = 10
+        self.fee_multiplier[5] = 1
 
-    @public(allow_deposit=True)
+    @public(allow_deposit=True, allow_withdrawal=False)
     def create_name(self, ctx: Context, name: str, token_symbol: str) -> None:
         """Register a new name under the domain by minting an NFT."""
         if not self.validate_name(name):
@@ -87,7 +91,8 @@ class ThothNamer(Blueprint):
             raise InvalidTokenSymbol
 
         # Verify fee payment
-        years_of_access = self._get_years_of_access(ctx)
+        fee = self.calculate_fee(name)
+        years_of_access = self._get_years_of_access(ctx, fee)
 
         # Calculate expiration date
         expiration_date = datetime.today() + timedelta(days=years_of_access * 365)
@@ -100,7 +105,7 @@ class ThothNamer(Blueprint):
             resolving_address=ctx.caller_id,
             expiration_date=self._datetime_to_string(expiration_date)
         )
-        self.total_fee += self.fee * years_of_access
+        self.total_fee += fee * years_of_access
 
     @public(allow_actions=False)
     def change_resolving_address(self,
@@ -114,7 +119,7 @@ class ThothNamer(Blueprint):
 
         self.registered_names[name] = record.update_resolving_address(new_resolving_address)
 
-    @public(allow_deposit=True)
+    @public(allow_deposit=True, allow_withdrawal=False)
     def deposit_nft(self, ctx: Context, name: str) -> None:
         """Deposit NFT to enable name management."""
         if name not in self.registered_names:
@@ -124,7 +129,7 @@ class ThothNamer(Blueprint):
         self._check_action_record_token(ctx, record.token_uid, NCActionType.DEPOSIT)
         self.registered_names[name] = record.update_owner_address(new_owner_address=ctx.caller_id)
 
-    @public(allow_withdrawal=True)
+    @public(allow_deposit=False, allow_withdrawal=True)
     def withdraw_nft(self, ctx: Context, name: str) -> None:
         """Withdraw NFT to enable transfer."""
         if name not in self.registered_names:
@@ -144,7 +149,7 @@ class ThothNamer(Blueprint):
         # Return NFT and revoke authorization
         self.registered_names[name] = record.update_owner_address(new_owner_address=None)
 
-    @public
+    @public(allow_deposit=True, allow_withdrawal=False)
     def renew_name(self, ctx: Context, name: str) -> None:
         """Renew a name registration for another period."""
         if name not in self.registered_names:
@@ -156,7 +161,8 @@ class ThothNamer(Blueprint):
             raise NotAuthorized
 
         # Verify fee payment
-        years_of_access = self._get_years_of_access(ctx)
+        fee = self.calculate_fee(name)
+        years_of_access = self._get_years_of_access(ctx, fee)
 
         # Calculate new expiration date
         current_expiration = self._string_to_datetime(record.expiration_date)
@@ -165,7 +171,31 @@ class ThothNamer(Blueprint):
         # Update expiration in record
         self.registered_names[name] = record.update_expiration_date(new_expiration_date)
 
-        self.total_fee += self.fee * years_of_access
+        self.total_fee += fee * years_of_access
+
+    @public(allow_actions=False)
+    def change_fee(self, ctx: Context, new_fee: Amount) -> None:
+        """Change the fee."""
+        self._only_dev(ctx)
+        if new_fee <= 0:
+            raise InvalidFee('Fee must be a positive value.')
+        self.base_fee = new_fee
+
+    @public(allow_actions=False)
+    def change_fee_multiplier(self, ctx: Context, length: int, new_multiplier: int) -> None:
+        """
+            Change the fee multiplier.
+
+            The possible lengths are: 3, 4, 5. 
+            The multiplier of length 5 will be used for all other lengths.
+        """
+        self._only_dev(ctx)
+        if length not in self.fee_multiplier:
+            raise InvalidLength('Length not found in fee multiplier. Must be 3, 4 or 5. \
+                                Length 5 will be used for all other lengths.')
+        if new_multiplier <= 0:
+            raise InvalidMultiplier('Multiplier must be a positive value.')
+        self.fee_multiplier[length] = new_multiplier
 
     @view
     def resolve_name(self, name: str) -> str:
@@ -237,6 +267,29 @@ class ThothNamer(Blueprint):
     def get_contract_domain(self) -> str:
         """Get the contract domain."""
         return self.domain
+    
+    @view
+    def calculate_fee(self, name: str) -> Amount:
+        """Calculate the fee for a name based on its length."""
+        if not self.validate_name(name):
+            raise InvalidNameFormat
+        length = len(name)
+        if length in self.fee_multiplier:
+            return self.base_fee * self.fee_multiplier[length]
+        return self.base_fee * self.fee_multiplier[5]
+    
+    @view
+    def get_fee_multiplier(self, length: int) -> int:
+        """Get the fee multiplier for a given length."""
+        if length not in self.fee_multiplier:
+            raise InvalidLength('Length not found in fee multiplier. Must be 3, 4 or 5. \
+                                Length 5 will be used for all other lengths.')
+        return self.fee_multiplier[length]
+
+    def _only_dev(self, ctx: Context) -> None:
+        """Check if the caller is the developer."""
+        if ctx.caller_id != self.dev_address:
+            raise NotAuthorized
 
     def _mint_name_nft(self, name: str, token_symbol: str) -> TokenUid:
         """Mint a new NFT for the name and return its UID."""
@@ -305,15 +358,15 @@ class ThothNamer(Blueprint):
             raise InvalidAmount('Amount must be 1.')
         print(action.token_uid, token_uid)
 
-    def _get_years_of_access(self, ctx: Context):
+    def _get_years_of_access(self, ctx: Context, fee: Amount):
         """Return the number of years that have been bought."""
         action = self._get_action(ctx)
-        if action.amount < self.fee:
-            raise InsufficientBalance('Deposit amount is less than fee.')
-        if action.amount % self.fee != 0:
-            raise InvalidAmount('Deposit amount must be a multiple of the fee.')
+        if action.amount < fee:
+            raise InsufficientBalance(f'Deposit amount is less than fee ({fee}).')
+        if action.amount % fee != 0:
+            raise InvalidAmount(f'Deposit amount must be a multiple of the fee ({fee}).')
 
-        return action.amount // self.fee
+        return action.amount // fee
 
     def _check_name_expired(self, name: str) -> bool:
         """Check if a name registration has expired."""
@@ -407,5 +460,13 @@ class OwnershipNotReliable(NCFail):
     pass
 
 class InvalidActionType(NCFail):
+    """"""
+    pass
+
+class InvalidLength(NCFail):
+    """"""
+    pass
+
+class InvalidMultiplier(NCFail):
     """"""
     pass
