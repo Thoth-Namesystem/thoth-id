@@ -18,10 +18,14 @@ from hathor.crypto.util import get_address_from_public_key
 HTR_UID = b'\x00'
 
 # Validation constants
-MAX_PROFILE_DATA_ENTRIES = 20  # Maximum number of profile data entries
-MAX_PROFILE_KEY_LENGTH = 50    # Maximum length for profile data keys
-MAX_PROFILE_VALUE_LENGTH = 1000  # Maximum length for profile data values
-MAX_TOKEN_SYMBOL_LENGTH = 5     # Maximum length for token symbols
+MAX_PROFILE_DATA_ENTRIES = 20     # Maximum number of profile data entries
+MAX_PROFILE_KEY_LENGTH = 50       # Maximum length for profile data keys
+MAX_PROFILE_VALUE_LENGTH = 1000   # Maximum length for profile data values
+MAX_TOKEN_SYMBOL_LENGTH = 5       # Maximum length for token symbols
+MAX_TOTAL_PROFILE_SIZE = 10000    # Maximum total size of all profile data in bytes
+
+# Time constants (in days)
+GRACE_PERIOD_DAYS = 30            # Grace period after expiration before name becomes available
 
 
 class NameRecord(NamedTuple):
@@ -89,6 +93,20 @@ class NameRecord(NamedTuple):
             expiration_date=self.expiration_date,
             data=new_data
         )
+        
+    def remove_data(self, key: str) -> 'NameRecord':
+        """Create a new NameRecord with a data key removed."""
+        new_data = dict(self.data)  # Create a copy of the current data
+        if key in new_data:
+            del new_data[key]
+        return NameRecord(
+            token_uid=self.token_uid,
+            owner_address=self.owner_address,
+            manager_address=self.manager_address,
+            resolving_address=self.resolving_address,
+            expiration_date=self.expiration_date,
+            data=new_data
+        )
 
 
 class ThothNamer(Blueprint):
@@ -123,8 +141,15 @@ class ThothNamer(Blueprint):
         """Register a new name under the domain by minting an NFT."""
         if not self.validate_name(name):
             raise InvalidNameFormat
-        if name in self.registered_names:
-            raise NameAlreadyExists
+        if not self.is_name_available(name):
+            if name in self.registered_names:
+                record = self.registered_names[name]
+                expiration_date = self._string_to_datetime(record.expiration_date)
+                if expiration_date > datetime.today():
+                    raise NameAlreadyExists('Name is already registered')
+                else:
+                    grace_period_end = expiration_date + timedelta(days=GRACE_PERIOD_DAYS)
+                    raise NameInGracePeriod(f'Name is in grace period until {grace_period_end.isoformat()}')
         if not (0 < len(token_symbol) <= MAX_TOKEN_SYMBOL_LENGTH):
             raise InvalidTokenSymbol(f'Token symbol must be between 1 and {MAX_TOKEN_SYMBOL_LENGTH} characters')
 
@@ -148,6 +173,34 @@ class ThothNamer(Blueprint):
         self.total_fee += fee * years_of_access
 
     @public(allow_actions=False)
+    def delete_profile_data(self, ctx: Context, name: str, key: str) -> None:
+        """Delete a field from the profile data.
+        
+        Args:
+            ctx: The context object
+            name: The name to update
+            key: The profile data key to delete
+            
+        Only the manager can delete profile data.
+        """
+        if not self.validate_name(name):
+            raise InvalidNameFormat
+        if name not in self.registered_names:
+            raise NameNotFound
+            
+        record = self.registered_names[name]
+        
+        # Check if key exists
+        if key not in record.data:
+            raise InvalidDataKey('Key does not exist in profile data')
+            
+        # Authorization check
+        if record.manager_address != ctx.caller_id:
+            raise NotAuthorized('Only the manager can delete profile data')
+            
+        self.registered_names[name] = record.remove_data(key)
+    
+    @public(allow_actions=False)
     def update_profile_data(self, ctx: Context, name: str, key: str, value: str) -> None:
         """Update a specific field in the profile data.
         
@@ -159,7 +212,6 @@ class ThothNamer(Blueprint):
             
         Only the manager can update profile data.
         """
-        self.validate_key_format(key, value)
         if not self.validate_name(name):
             raise InvalidNameFormat
         if name not in self.registered_names:
@@ -169,6 +221,9 @@ class ThothNamer(Blueprint):
         # Validate total number of keys
         if len(record.data) >= MAX_PROFILE_DATA_ENTRIES and key not in record.data:
             raise TooManyDataKeys(f'Maximum of {MAX_PROFILE_DATA_ENTRIES} profile data keys allowed')
+            
+        # Validate key format and total size
+        self.validate_key_format(key, value, record.data)
         
         # Authorization check
         if record.manager_address != ctx.caller_id:
@@ -183,15 +238,22 @@ class ThothNamer(Blueprint):
                                new_manager_address: Address) -> None:
         """Change the manager address of a name when authorized.
         
-        Only the NFT owner can change the manager address, and only when the NFT is deposited.
+        The manager can be changed by:
+        1. The NFT owner (when NFT is deposited)
+        2. The current manager (no deposit needed)
         """
         record = self.registered_names[name]
         
-        # Verify NFT is deposited and caller is the owner
-        if record.owner_address is None:
-            raise OwnershipNotReliable('The token is not deposited on the contract')
-        if record.owner_address != ctx.caller_id:
-            raise NotAuthorized('Only the NFT owner can change the manager address')
+        # Check authorization
+        is_owner = record.owner_address == ctx.caller_id
+        is_manager = record.manager_address == ctx.caller_id
+        
+        if not (is_owner or is_manager):
+            raise NotAuthorized('Only the owner or current manager can change the manager address')
+            
+        # If caller is owner, verify NFT is deposited
+        if is_owner and record.owner_address is None:
+            raise OwnershipNotReliable('The token must be deposited to change manager as owner')
             
         self.registered_names[name] = record.update_manager_address(new_manager_address)
 
@@ -286,6 +348,23 @@ class ThothNamer(Blueprint):
         self.fee_multiplier[length] = new_multiplier
 
     @view
+    def is_name_available(self, name: str) -> bool:
+        """Check if a name is available for registration.
+        
+        A name is available if:
+        1. It doesn't exist in the registry, or
+        2. It's expired AND past the grace period
+        """
+        if name not in self.registered_names:
+            return True
+            
+        record = self.registered_names[name]
+        expiration_date = self._string_to_datetime(record.expiration_date)
+        grace_period_end = expiration_date + timedelta(days=GRACE_PERIOD_DAYS)
+        
+        return datetime.today() > grace_period_end
+
+    @view
     def resolve_name(self, name: str) -> str:
         """Get the resolving address associated with a name."""
         self._check_name_expired(name)
@@ -330,21 +409,21 @@ class ThothNamer(Blueprint):
         
         Rules:
         - 3-80 characters long
-        - Only lowercase letters, numbers, and single hyphens
+        - Only ASCII lowercase letters, numbers, and single hyphens
         - No consecutive hyphens
         - No hyphen at start or end
+        - No unicode homoglyphs or control characters
         """
-        # Check if name is empty
-        if not name:
+        # Check if name is empty or not a string
+        if not isinstance(name, str) or not name:
+            return False
+        
+        # Check if name contains any non-ASCII characters
+        if not name.isascii():
             return False
         
         # Check length (between 3 and 80 characters)
         if len(name) < 3 or len(name) > 80:
-            return False
-        
-        # Only allow lowercase letters, numbers, and hyphens
-        allowed_chars = set('abcdefghijklmnopqrstuvwxyz0123456789-')
-        if not all(c in allowed_chars for c in name):
             return False
         
         # Don't allow names starting or ending with hyphen
@@ -354,23 +433,41 @@ class ThothNamer(Blueprint):
         # Don't allow consecutive hyphens
         if '--' in name:
             return False
+            
+        # Only allow lowercase letters, numbers, and hyphens
+        name_without_hyphens = name.replace('-', '')
+        if not name_without_hyphens.islower() or not name_without_hyphens.isalnum():
+            return False
         
         return True
     
     @view
     def validate_key_format(self, key: str, value: str) -> bool:
-        """Validate key format."""
-        if not key or len(key) > MAX_PROFILE_KEY_LENGTH:
+        """Validate key format and value.
+        
+        Rules:
+        - Key must be 1-50 characters
+        - Key must be alphanumeric with underscores
+        - Value must be 1-1000 characters
+        - Value must be valid UTF-8
+        - No control characters allowed (except newline, tab)
+        """
+        # Validate key
+        if not isinstance(key, str) or not key or len(key) > MAX_PROFILE_KEY_LENGTH:
             raise InvalidDataKey(f'Key must be between 1 and {MAX_PROFILE_KEY_LENGTH} characters')
         
         # Only allow alphanumeric and underscores in keys
-        if not all(c.isalnum() or c == '_' for c in key):
+        if not key.replace('_', '').isalnum():
             raise InvalidDataKey('Key must contain only letters, numbers, and underscores')
         
-        # Validate value length
-        if not value or len(value) > MAX_PROFILE_VALUE_LENGTH:
+        # Validate value
+        if not isinstance(value, str) or not value or len(value) > MAX_PROFILE_VALUE_LENGTH:
             raise InvalidDataValue(f'Value must be between 1 and {MAX_PROFILE_VALUE_LENGTH} characters')
-
+            
+        # Check for control characters in value (allow newline, tab, carriage return)
+        if value.find('\x00') >= 0:  # Null byte
+            raise InvalidDataValue('Value contains invalid control characters')
+            
         return True
 
     @view
@@ -382,6 +479,55 @@ class ThothNamer(Blueprint):
     def get_contract_domain(self) -> str:
         """Get the contract domain."""
         return self.domain
+        
+    @view
+    def check_name_ownership(self, name: str, address: Address) -> bool:
+        """Check if a specific name is owned by an address.
+        
+        Args:
+            name: The name to check
+            address: The address to verify ownership for
+            
+        Returns:
+            bool: True if the address owns the name, False otherwise
+        """
+        if name not in self.registered_names:
+            return False
+            
+        record = self.registered_names[name]
+        if record.owner_address != address:
+            return False
+            
+        # Check if expired
+        expiration_date = self._string_to_datetime(record.expiration_date)
+        if expiration_date < datetime.today():
+            return False
+            
+        return True
+        
+    @view
+    def check_name_status(self, name: str) -> str:
+        """Check the status of a specific name.
+        
+        Args:
+            name: The name to check
+            
+        Returns:
+            str: 'active', 'expired', or 'available'
+        """
+        if name not in self.registered_names:
+            return 'available'
+            
+        record = self.registered_names[name]
+        expiration_date = self._string_to_datetime(record.expiration_date)
+        
+        if expiration_date < datetime.today():
+            grace_period_end = expiration_date + timedelta(days=GRACE_PERIOD_DAYS)
+            if datetime.today() > grace_period_end:
+                return 'available'
+            return 'grace_period'
+            
+        return 'active'
     
     @view
     def calculate_fee(self, name: str) -> Amount:
@@ -689,4 +835,16 @@ class InvalidDataValue(NCFail):
 
 class TooManyDataKeys(NCFail):
     """Raised when trying to add more profile data keys than the maximum allowed."""
+    pass
+
+class NameInGracePeriod(NCFail):
+    """Raised when attempting to register a name that is in its grace period.
+    
+    After expiration, names have a grace period during which the original owner
+    can still renew them before they become available to others.
+    """
+    pass
+
+class InvalidParameter(NCFail):
+    """Raised when an invalid parameter value is provided to a method."""
     pass
