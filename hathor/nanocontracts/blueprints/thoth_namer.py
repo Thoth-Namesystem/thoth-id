@@ -22,16 +22,20 @@ class NameRecord(NamedTuple):
     """Record for storing name data and NFT information"""
     token_uid: TokenUid
     owner_address: Optional[Address]  # None means NFT is not deposited
+    manager_address: Address
     resolving_address: Address
     expiration_date: str  # Stored as ISO format string
+    data: dict[str, str]  # Additional profile data
 
     def update_owner_address(self, new_owner_address: Optional[Address]) -> 'NameRecord':
         """Create a new NameRecord with updated owner_address."""
         return NameRecord(
             token_uid=self.token_uid,
             owner_address=new_owner_address,
+            manager_address=self.manager_address,
             resolving_address=self.resolving_address,
-            expiration_date=self.expiration_date
+            expiration_date=self.expiration_date,
+            data=self.data
         )
 
     def update_resolving_address(self, new_resolving_address: Address) -> 'NameRecord':
@@ -39,8 +43,10 @@ class NameRecord(NamedTuple):
         return NameRecord(
             token_uid=self.token_uid,
             owner_address=self.owner_address,
+            manager_address=self.manager_address,
             resolving_address=new_resolving_address,
-            expiration_date=self.expiration_date
+            expiration_date=self.expiration_date,
+            data=self.data
         )
 
     def update_expiration_date(self, new_expiration_date: str) -> 'NameRecord':
@@ -48,8 +54,34 @@ class NameRecord(NamedTuple):
         return NameRecord(
             token_uid=self.token_uid,
             owner_address=self.owner_address,
+            manager_address=self.manager_address,
             resolving_address=self.resolving_address,
-            expiration_date=new_expiration_date
+            expiration_date=new_expiration_date,
+            data=self.data
+        )
+
+    def update_manager_address(self, new_manager_address: Address) -> 'NameRecord':
+        """Create a new NameRecord with updated manager_address."""
+        return NameRecord(
+            token_uid=self.token_uid,
+            owner_address=self.owner_address,
+            manager_address=new_manager_address,
+            resolving_address=self.resolving_address,
+            expiration_date=self.expiration_date,
+            data=self.data
+        )
+
+    def update_data(self, key: str, value: str) -> 'NameRecord':
+        """Create a new NameRecord with updated data field."""
+        new_data = dict(self.data)  # Create a copy of the current data
+        new_data[key] = value
+        return NameRecord(
+            token_uid=self.token_uid,
+            owner_address=self.owner_address,
+            manager_address=self.manager_address,
+            resolving_address=self.resolving_address,
+            expiration_date=self.expiration_date,
+            data=new_data
         )
 
 
@@ -102,20 +134,56 @@ class ThothNamer(Blueprint):
         self.registered_names[name] = NameRecord(
             token_uid=token_uid,
             owner_address=ctx.caller_id,  # NFT starts in user's wallet
+            manager_address=ctx.caller_id,
             resolving_address=ctx.caller_id,
-            expiration_date=self._datetime_to_string(expiration_date)
+            expiration_date=self._datetime_to_string(expiration_date),
+            data={}  # Initialize with empty data dictionary
         )
         self.total_fee += fee * years_of_access
+
+    @public(allow_actions=False)
+    def update_profile_data(self, ctx: Context, name: str, key: str, value: str) -> None:
+        """Update a specific field in the profile data.
+        
+        Only the manager can update profile data.
+        """
+        record = self.registered_names[name]
+        if record.manager_address != ctx.caller_id:
+            raise NotAuthorized('Only the manager can update profile data')
+
+        self.registered_names[name] = record.update_data(key, value)
+
+    @public(allow_actions=False)
+    def change_manager_address(self,
+                               ctx: Context,
+                               name: str,
+                               new_manager_address: Address) -> None:
+        """Change the manager address of a name when authorized.
+        
+        Only the NFT owner can change the manager address, and only when the NFT is deposited.
+        """
+        record = self.registered_names[name]
+        
+        # Verify NFT is deposited and caller is the owner
+        if record.owner_address is None:
+            raise OwnershipNotReliable('The token is not deposited on the contract')
+        if record.owner_address != ctx.caller_id:
+            raise NotAuthorized('Only the NFT owner can change the manager address')
+            
+        self.registered_names[name] = record.update_manager_address(new_manager_address)
 
     @public(allow_actions=False)
     def change_resolving_address(self,
                                  ctx: Context,
                                  name: str,
                                  new_resolving_address: Address) -> None:
-        """Change the resolving address of a name when authorized."""
+        """Change the resolving address of a name when authorized.
+        
+        Only the manager can change the resolving address.
+        """
         record = self.registered_names[name]
-        if not self._verify_nft_ownership(record.token_uid, ctx.caller_id):
-            raise NotAuthorized('You are not the owner of the token.')
+        if record.manager_address != ctx.caller_id:
+            raise NotAuthorized('Only the manager can change the resolving address')
 
         self.registered_names[name] = record.update_resolving_address(new_resolving_address)
 
@@ -156,9 +224,6 @@ class ThothNamer(Blueprint):
             raise NameNotFound
 
         record = self.registered_names[name]
-        # Verify NFT ownership. This is for the scenario where only the owner can renew its name registration.
-        if not self._verify_nft_ownership(record.token_uid, ctx.caller_id):
-            raise NotAuthorized
 
         # Verify fee payment
         fee = self.calculate_fee(name)
@@ -387,12 +452,16 @@ class ThothNamer(Blueprint):
         return datetime.fromisoformat(dt_str)
     
     def _serialize_name_record(self, record: NameRecord) -> dict[str, str]:
-        return {
+        base_data = {
             'token_uid': record.token_uid.hex(),
             'owner_address': 'None' if record.owner_address is None else get_address_b58_from_bytes(record.owner_address),
+            'manager_address': get_address_b58_from_bytes(record.manager_address),
             'resolving_address': get_address_b58_from_bytes(record.resolving_address),
             'expiration_date': record.expiration_date
         }
+        # Add profile data
+        base_data.update(record.data)
+        return base_data
     
 
 class NameNotFound(NCFail):
@@ -469,4 +538,8 @@ class InvalidLength(NCFail):
 
 class InvalidMultiplier(NCFail):
     """"""
+    pass
+
+class InvalidDataKey(NCFail):
+    """Raised when trying to update a profile data field with an unauthorized key."""
     pass
