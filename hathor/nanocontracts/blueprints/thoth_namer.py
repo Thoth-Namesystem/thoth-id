@@ -494,11 +494,28 @@ class ThothNamer(Blueprint):
             raise NameExpired('Name registration has expired')
 
     def _datetime_to_string(self, dt: datetime) -> str:
-        """Convert datetime to ISO format string for storage."""
+        """Convert datetime to ISO format string for storage.
+        
+        Args:
+            dt: The datetime object to convert (must be timezone-naive)
+            
+        Returns:
+            str: The datetime in ISO format
+        """
+        if dt.tzinfo is not None:
+            raise InvalidExpiration('Datetime must be timezone-naive')
+            
         return dt.isoformat()
 
     def _string_to_datetime(self, dt_str: str) -> datetime:
-        """Convert ISO format string back to datetime for calculations."""
+        """Convert ISO format string back to datetime for calculations.
+        
+        Args:
+            dt_str: The ISO format datetime string
+            
+        Returns:
+            datetime: The parsed datetime object
+        """
         return datetime.fromisoformat(dt_str)
     
     def _serialize_name_record(self, record: NameRecord) -> dict[str, str]:
@@ -515,79 +532,151 @@ class ThothNamer(Blueprint):
     
 
 class NameNotFound(NCFail):
-    """"""
+    """Raised when attempting to access a name that is not registered in the system.
+    
+    This can happen when trying to manage, resolve, or query information about
+    a non-existent name.
+    """
     pass
 
 class NameAlreadyExists(NCFail):
-    """"""
+    """Raised when attempting to register a name that is already taken.
+    
+    Users should check name availability before attempting registration.
+    """
     pass
 
 class NotAuthorized(NCFail):
-    """"""
+    """Raised when an address attempts an operation without proper authorization.
+    
+    This includes:
+    - Non-owner trying to manage NFT
+    - Non-manager trying to update resolving address
+    - Non-dev trying to change contract settings
+    """
     pass
 
 class InvalidNameFormat(NCFail):
-    """"""
+    """Raised when a name doesn't meet the format requirements.
+    
+    Names must:
+    - Be 3-80 characters long
+    - Contain only lowercase letters, numbers, and hyphens
+    - Not start or end with a hyphen
+    - Not contain consecutive hyphens
+    """
     pass
 
 class InvalidTokenSymbol(NCFail):
-    """"""
+    """Raised when a token symbol doesn't meet the requirements.
+    
+    Token symbols must:
+    - Be 1-5 characters long
+    - Be unique within the system
+    """
     pass
 
 class WithdrawalNotAllowed(NCFail):
-    """"""
+    """Raised when attempting an unauthorized withdrawal operation.
+    
+    Only the owner of deposited NFTs can withdraw them.
+    """
     pass
 
 class DepositNotAllowed(NCFail):
-    """"""
+    """Raised when attempting an unauthorized deposit operation.
+    
+    Deposits must be of valid NFTs and by their owners.
+    """
     pass
 
 class InsufficientBalance(NCFail):
-    """"""
+    """Raised when attempting an operation with insufficient HTR balance.
+    
+    The deposit amount must cover the required fee for the operation.
+    """
     pass
 
 class InvalidFee(NCFail):
-    """"""
+    """Raised when an invalid fee value is provided.
+    
+    Fees must be positive values and appropriate for the operation.
+    """
     pass
 
 class InvalidAmount(NCFail):
-    """"""
+    """Raised when an invalid amount is provided for an operation.
+    
+    Amounts must be appropriate for the specific operation (e.g., NFT amount must be 1).
+    """
     pass
 
 class InvalidDomain(NCFail):
-    """"""
+    """Raised when attempting to set an invalid domain for the contract.
+    
+    The domain must be a non-empty string.
+    """
     pass
 
 class TooManyActions(NCFail):
-    """"""
+    """Raised when more than one action is provided for an operation.
+    
+    Most operations support only a single action at a time.
+    """
     pass
 
 class InvalidToken(NCFail):
-    """"""
+    """Raised when an operation involves an invalid or unexpected token.
+    
+    This includes using non-HTR tokens for fees or incorrect NFTs.
+    """
     pass
 
 class NameExpired(NCFail):
-    """"""
+    """Raised when attempting to use an expired name.
+    
+    Names must be renewed before expiration to maintain functionality.
+    """
     pass
 
 class InvalidExpiration(NCFail):
-    """"""
+    """Raised when handling invalid expiration dates.
+    
+    Dates must be:
+    - Valid ISO format strings
+    - Timezone-naive
+    - Between years 2020-2100
+    """
     pass
 
 class OwnershipNotReliable(NCFail):
-    """"""
+    """Raised when ownership status cannot be reliably determined.
+    
+    This happens when:
+    - NFT is not deposited in the contract
+    - Ownership verification fails
+    """
     pass
 
 class InvalidActionType(NCFail):
-    """"""
+    """Raised when an action's type doesn't match the expected type.
+    
+    Actions must match the operation being performed (deposit/withdrawal).
+    """
     pass
 
 class InvalidLength(NCFail):
-    """"""
+    """Raised when an invalid length is provided for fee calculation.
+    
+    Length must be one of the supported values (3, 4, or 5).
+    """
     pass
 
 class InvalidMultiplier(NCFail):
-    """"""
+    """Raised when an invalid fee multiplier is provided.
+    
+    Multipliers must be positive values.
+    """
     pass
 
 class InvalidDataKey(NCFail):
