@@ -17,6 +17,12 @@ from hathor.crypto.util import get_address_from_public_key
 
 HTR_UID = b'\x00'
 
+# Validation constants
+MAX_PROFILE_DATA_ENTRIES = 20  # Maximum number of profile data entries
+MAX_PROFILE_KEY_LENGTH = 50    # Maximum length for profile data keys
+MAX_PROFILE_VALUE_LENGTH = 1000  # Maximum length for profile data values
+MAX_TOKEN_SYMBOL_LENGTH = 5     # Maximum length for token symbols
+
 
 class NameRecord(NamedTuple):
     """Record for storing name data and NFT information"""
@@ -119,8 +125,8 @@ class ThothNamer(Blueprint):
             raise InvalidNameFormat
         if name in self.registered_names:
             raise NameAlreadyExists
-        if not 6 > len(token_symbol) > 0:
-            raise InvalidTokenSymbol
+        if not (0 < len(token_symbol) <= MAX_TOKEN_SYMBOL_LENGTH):
+            raise InvalidTokenSymbol(f'Token symbol must be between 1 and {MAX_TOKEN_SYMBOL_LENGTH} characters')
 
         # Verify fee payment
         fee = self.calculate_fee(name)
@@ -145,9 +151,26 @@ class ThothNamer(Blueprint):
     def update_profile_data(self, ctx: Context, name: str, key: str, value: str) -> None:
         """Update a specific field in the profile data.
         
+        Args:
+            ctx: The context object
+            name: The name to update
+            key: The profile data key (must be 3-50 chars, alphanumeric and underscores)
+            value: The profile data value (must be 1-1000 chars)
+            
         Only the manager can update profile data.
         """
+        self.validate_key_format(key, value)
+        if not self.validate_name(name):
+            raise InvalidNameFormat
+        if name not in self.registered_names:
+            raise NameNotFound
+        
         record = self.registered_names[name]
+        # Validate total number of keys
+        if len(record.data) >= MAX_PROFILE_DATA_ENTRIES and key not in record.data:
+            raise TooManyDataKeys(f'Maximum of {MAX_PROFILE_DATA_ENTRIES} profile data keys allowed')
+        
+        # Authorization check
         if record.manager_address != ctx.caller_id:
             raise NotAuthorized('Only the manager can update profile data')
 
@@ -303,13 +326,20 @@ class ThothNamer(Blueprint):
 
     @view
     def validate_name(self, name: str) -> bool:
-        """Verify if the name exists and is valid."""
+        """Verify if the name exists and is valid.
+        
+        Rules:
+        - 3-80 characters long
+        - Only lowercase letters, numbers, and single hyphens
+        - No consecutive hyphens
+        - No hyphen at start or end
+        """
         # Check if name is empty
         if not name:
             return False
         
-        # Check length (e.g., between 3 and 32 characters)
-        if len(name) < 3 or len(name) > 32:
+        # Check length (between 3 and 80 characters)
+        if len(name) < 3 or len(name) > 80:
             return False
         
         # Only allow lowercase letters, numbers, and hyphens
@@ -321,8 +351,28 @@ class ThothNamer(Blueprint):
         if name[0] == '-' or name[-1] == '-':
             return False
         
+        # Don't allow consecutive hyphens
+        if '--' in name:
+            return False
+        
         return True
     
+    @view
+    def validate_key_format(self, key: str, value: str) -> bool:
+        """Validate key format."""
+        if not key or len(key) > MAX_PROFILE_KEY_LENGTH:
+            raise InvalidDataKey(f'Key must be between 1 and {MAX_PROFILE_KEY_LENGTH} characters')
+        
+        # Only allow alphanumeric and underscores in keys
+        if not all(c.isalnum() or c == '_' for c in key):
+            raise InvalidDataKey('Key must contain only letters, numbers, and underscores')
+        
+        # Validate value length
+        if not value or len(value) > MAX_PROFILE_VALUE_LENGTH:
+            raise InvalidDataValue(f'Value must be between 1 and {MAX_PROFILE_VALUE_LENGTH} characters')
+
+        return True
+
     @view
     def get_dev_address(self) -> Address:
         """Get the developer's address."""
@@ -541,5 +591,13 @@ class InvalidMultiplier(NCFail):
     pass
 
 class InvalidDataKey(NCFail):
-    """Raised when trying to update a profile data field with an unauthorized key."""
+    """Raised when trying to update a profile data field with an invalid key format."""
+    pass
+
+class InvalidDataValue(NCFail):
+    """Raised when trying to update a profile data field with an invalid value format."""
+    pass
+
+class TooManyDataKeys(NCFail):
+    """Raised when trying to add more profile data keys than the maximum allowed."""
     pass
