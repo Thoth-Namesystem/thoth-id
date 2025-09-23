@@ -395,6 +395,41 @@ class ThothNamer(Blueprint):
         return get_address_b58_from_bytes(record.owner_address)
 
     @view
+    def get_name_expiration_info(self, name: str) -> dict[str, str]:
+        """Get detailed expiration information for a name.
+        
+        Returns a dictionary containing:
+        - expiration_date: The expiration date in ISO format
+        - grace_period_end: The grace period end date in ISO format
+        - status: Current status (active, grace_period, or available)
+        - days_remaining: Days until expiration (or until grace period ends if expired)
+        """
+        if name not in self.registered_names:
+            raise NameNotFound
+
+        record = self.registered_names[name]
+        expiration_date = self._string_to_datetime(record.expiration_date)
+        grace_period_end = expiration_date + timedelta(days=GRACE_PERIOD_DAYS)
+        today = datetime.today()
+        
+        if today < expiration_date:
+            status = 'active'
+            remaining = (expiration_date - today).days
+        elif today < grace_period_end:
+            status = 'grace_period'
+            remaining = (grace_period_end - today).days
+        else:
+            status = 'available'
+            remaining = 0
+            
+        return {
+            'expiration_date': expiration_date.isoformat(),
+            'grace_period_end': grace_period_end.isoformat(),
+            'status': status,
+            'days_remaining': remaining
+        }
+        
+    @view
     def get_name_expiration_date(self, name: str) -> datetime:
         """Get the expiration date of a name registration."""
         if name not in self.registered_names:
@@ -530,14 +565,32 @@ class ThothNamer(Blueprint):
         return 'active'
     
     @view
-    def calculate_fee(self, name: str) -> Amount:
-        """Calculate the fee for a name based on its length."""
+    def get_fee_info(self, name: str) -> dict[str, int]:
+        """Get detailed fee information for a name.
+        
+        Returns a dictionary containing:
+        - base_fee: The base registration fee
+        - multiplier: The fee multiplier for this name length
+        - total_fee: The total fee required (base_fee * multiplier)
+        """
         if not self.validate_name(name):
             raise InvalidNameFormat
+            
         length = len(name)
+        multiplier = self.fee_multiplier[5]  # Default multiplier
         if length in self.fee_multiplier:
-            return self.base_fee * self.fee_multiplier[length]
-        return self.base_fee * self.fee_multiplier[5]
+            multiplier = self.fee_multiplier[length]
+            
+        return {
+            'base_fee': self.base_fee,
+            'multiplier': multiplier,
+            'total_fee': self.base_fee * multiplier
+        }
+        
+    @view
+    def calculate_fee(self, name: str) -> Amount:
+        """Calculate the fee for a name based on its length."""
+        return self.get_fee_info(name)['total_fee']
     
     @view
     def get_fee_multiplier(self, length: int) -> int:
@@ -546,6 +599,21 @@ class ThothNamer(Blueprint):
             raise InvalidLength('Length not found in fee multiplier. Must be 3, 4 or 5. \
                                 Length 5 will be used for all other lengths.')
         return self.fee_multiplier[length]
+        
+    @view
+    def get_fee_structure(self) -> dict[str, dict[str, int]]:
+        """Get the complete fee structure information.
+        
+        Returns a dictionary containing:
+        - base_fee: The base registration fee
+        - multipliers: Dictionary of length-to-multiplier mappings
+        - default_multiplier: The multiplier used for lengths > 5
+        """
+        return {
+            'base_fee': self.base_fee,
+            'multipliers': self.fee_multiplier,
+            'default_multiplier': self.fee_multiplier[5]
+        }
 
     def _only_dev(self, ctx: Context) -> None:
         """Check if the caller is the developer."""
