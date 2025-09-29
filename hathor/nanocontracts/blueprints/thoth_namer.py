@@ -115,6 +115,7 @@ class ThothNamer(Blueprint):
     # State variables
     domain: str  # Base domain (e.g., "htr")
     registered_names: dict[str, NameRecord]  # Mapping of names to NameRecord objects
+    manager_names: dict[Address, list[str]]  # Mapping of manager addresses to their managed names
     dev_address: Address  # Developer address for receiving fees
     base_fee: Amount  # Base fee for registering a name
     total_fee: Amount  # Total fees collected
@@ -170,6 +171,10 @@ class ThothNamer(Blueprint):
             expiration_date=self._datetime_to_string(expiration_date),
             data={}  # Initialize with empty data dictionary
         )
+        
+        # Add to manager's list of names
+        self._add_name_to_manager(ctx.caller_id, name)
+        
         self.total_fee += fee * years_of_access
 
     @public(allow_actions=False)
@@ -254,6 +259,9 @@ class ThothNamer(Blueprint):
         # If caller is owner, verify NFT is deposited
         if is_owner and record.owner_address is None:
             raise OwnershipNotReliable('The token must be deposited to change manager as owner')
+            
+        # Update manager mappings
+        self._update_name_manager(name, record.manager_address, new_manager_address)
             
         self.registered_names[name] = record.update_manager_address(new_manager_address)
 
@@ -414,19 +422,15 @@ class ThothNamer(Blueprint):
         
         if today < expiration_date:
             status = 'active'
-            remaining = (expiration_date - today).days
         elif today < grace_period_end:
             status = 'grace_period'
-            remaining = (grace_period_end - today).days
         else:
             status = 'available'
-            remaining = 0
             
         return {
             'expiration_date': expiration_date.isoformat(),
             'grace_period_end': grace_period_end.isoformat(),
             'status': status,
-            'days_remaining': remaining
         }
         
     @view
@@ -601,6 +605,18 @@ class ThothNamer(Blueprint):
         return self.fee_multiplier[length]
         
     @view
+    def get_manager_names(self, manager_address: Address) -> list[str]:
+        """Get all names managed by a specific address.
+        
+        Args:
+            manager_address: The address to check
+            
+        Returns:
+            list[str]: List of names managed by this address (empty if none)
+        """
+        return self.manager_names.get(manager_address, [])
+        
+    @view
     def get_fee_structure(self) -> dict[str, dict[str, int]]:
         """Get the complete fee structure information.
         
@@ -731,6 +747,30 @@ class ThothNamer(Blueprint):
             datetime: The parsed datetime object
         """
         return datetime.fromisoformat(dt_str)
+    
+    def _add_name_to_manager(self, manager_address: Address, name: str) -> None:
+        """Add a name to a manager's list of managed names."""
+        if manager_address not in self.manager_names:
+            self.manager_names[manager_address] = []
+        if name not in self.manager_names[manager_address]:
+            self.manager_names[manager_address].append(name)
+            
+    def _remove_name_from_manager(self, manager_address: Address, name: str) -> None:
+        """Remove a name from a manager's list of managed names."""
+        if manager_address in self.manager_names:
+            if name in self.manager_names[manager_address]:
+                names_tuple = self.manager_names[manager_address]
+                names_list = list(names_tuple)
+                names_list.remove(name)
+                self.manager_names[manager_address] = tuple(names_list)
+            # Clean up empty lists
+            if not self.manager_names[manager_address]:
+                del self.manager_names[manager_address]
+                
+    def _update_name_manager(self, name: str, old_manager: Address, new_manager: Address) -> None:
+        """Update manager mappings when a name's manager changes."""
+        self._remove_name_from_manager(old_manager, name)
+        self._add_name_to_manager(new_manager, name)
     
     def _serialize_name_record(self, record: NameRecord) -> dict[str, str]:
         base_data = {

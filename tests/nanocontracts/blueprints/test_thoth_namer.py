@@ -23,7 +23,13 @@ from hathor.nanocontracts.blueprints.thoth_namer import (
     InvalidFee,
     InvalidDomain,
     TooManyActions,
-    InvalidToken
+    InvalidToken,
+    InvalidAmount,
+    TooManyDataKeys,
+    InvalidDataKey,
+    InvalidDataValue,
+    NameExpired,
+    NameInGracePeriod
 )
 
 settings = HathorSettings()
@@ -94,28 +100,57 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
             get_address_b58_from_bytes(new_address)
         )
 
-    def test_invalid_name_registration(self):
+    def test_name_registration_edge_cases(self):
+        """Test edge cases for name registration."""
         self.initialize_contract()
 
-        # Test invalid name format
+        # Test minimum length (3 chars)
+        self._register_name("abc", self.registration_fee)
+        
+        # Test maximum length (80 chars)
+        max_name = "a" * 80
+        self._register_name(max_name, self.registration_fee)
+        
+        # Test valid hyphen usage
+        self._register_name("valid-name-here", self.registration_fee)
+        
+        # Test all allowed characters
+        self._register_name("test-123-name", self.registration_fee)
+        
+        # Test invalid cases
         with self.assertRaises(InvalidNameFormat):
-            self._register_name("a", self.registration_fee)  # Too short
+            self._register_name("ab", self.registration_fee)  # Too short
             
         with self.assertRaises(InvalidNameFormat):
-            self._register_name("UPPERCASE", self.registration_fee)
+            self._register_name("a" * 81, self.registration_fee)  # Too long
             
         with self.assertRaises(InvalidNameFormat):
-            self._register_name("-start-with-hyphen", self.registration_fee)
-
-        # Test insufficient fee
-        with self.assertRaises(InsufficientBalance):
-            self._register_name("validname", self.registration_fee - 1)
-
+            self._register_name("UPPERCASE", self.registration_fee)  # Uppercase
+            
+        with self.assertRaises(InvalidNameFormat):
+            self._register_name("invalid--name", self.registration_fee)  # Consecutive hyphens
+            
+        with self.assertRaises(InvalidNameFormat):
+            self._register_name("-start-hyphen", self.registration_fee)  # Start hyphen
+            
+        with self.assertRaises(InvalidNameFormat):
+            self._register_name("end-hyphen-", self.registration_fee)  # End hyphen
+            
+        with self.assertRaises(InvalidNameFormat):
+            self._register_name("special@chars", self.registration_fee)  # Special chars
+            
         # Test duplicate registration
-        name = "validname"
+        name = "duplicate-test"
         self._register_name(name, self.registration_fee)
         with self.assertRaises(NameAlreadyExists):
             self._register_name(name, self.registration_fee)
+            
+        # Test fee edge cases
+        with self.assertRaises(InsufficientBalance):
+            self._register_name("fee-test", self.registration_fee - 1)  # Insufficient fee
+            
+        with self.assertRaises(InvalidAmount):
+            self._register_name("fee-test", self.registration_fee + 1)  # Non-multiple fee
 
     def test_name_ownership_operations(self):
         self.initialize_contract()
@@ -146,6 +181,63 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
             new_owner
         )
 
+    def test_profile_data_edge_cases(self):
+        """Test edge cases for profile data operations."""
+        self.initialize_contract()
+        runner = self.runner
+        
+        # Register a name and get its owner
+        name = "profile-test"
+        owner_address = self._register_name(name, self.registration_fee)
+        tx = self._get_any_tx()
+        
+        # Test maximum key length
+        max_key = "a" * 50
+        context = Context([], tx, owner_address, timestamp=self.get_current_timestamp())
+        runner.call_public_method(self.nc_id, 'update_profile_data', context, name, max_key, "value")
+        
+        # Test maximum value length
+        max_value = "a" * 1000
+        runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "key", max_value)
+        
+        # Test maximum number of keys
+        for i in range(20):
+            runner.call_public_method(self.nc_id, 'update_profile_data', context, name, f"key{i}", "value")
+            
+        # Test adding more than maximum keys
+        with self.assertRaises(TooManyDataKeys):
+            runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "onemore", "value")
+            
+        # Test invalid key format
+        with self.assertRaises(InvalidDataKey):
+            runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "invalid@key", "value")
+            
+        # Test too long key
+        with self.assertRaises(InvalidDataKey):
+            runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "a" * 51, "value")
+            
+        # Test too long value
+        with self.assertRaises(InvalidDataValue):
+            runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "key", "a" * 1001)
+            
+        # Test null byte in value
+        with self.assertRaises(InvalidDataValue):
+            runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "key", "value\x00")
+            
+        # Test unauthorized update
+        unauthorized_address, _ = self._get_any_address()
+        context = Context([], tx, unauthorized_address, timestamp=self.get_current_timestamp())
+        with self.assertRaises(NotAuthorized):
+            runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "key", "value")
+            
+        # Test deleting profile data
+        context = Context([], tx, owner_address, timestamp=self.get_current_timestamp())
+        runner.call_public_method(self.nc_id, 'delete_profile_data', context, name, "key0")
+        
+        # Test deleting non-existent key
+        with self.assertRaises(InvalidDataKey):
+            runner.call_public_method(self.nc_id, 'delete_profile_data', context, name, "nonexistent")
+
     def test_dev_operations(self):
         self.initialize_contract()
         runner = self.runner
@@ -168,6 +260,109 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         context = Context([], tx, self.dev_address, timestamp=self.get_current_timestamp())
         runner.call_public_method(self.nc_id, 'change_dev_address', context, new_dev_address)
         self.assertEqual(self.nc_storage.get('dev_address'), new_dev_address)
+
+    def test_nft_operations_edge_cases(self):
+        """Test edge cases for NFT deposit and withdrawal operations."""
+        self.initialize_contract()
+        runner = self.runner
+        
+        # Register a name and get its owner
+        name = "nft-test"
+        owner_address = self._register_name(name, self.registration_fee)
+        tx = self._get_any_tx()
+        
+        # Get the NFT token UID
+        name_data = runner.call_view_method(self.nc_id, 'get_name_data', name)
+        token_uid = bytes.fromhex(name_data['token_uid'])
+        
+        # Test NFT deposit
+        context = Context(
+            [NCAction(NCActionType.DEPOSIT, token_uid, 1)],
+            tx, owner_address,
+            timestamp=self.get_current_timestamp()
+        )
+        runner.call_public_method(self.nc_id, 'deposit_nft', context, name)
+        
+        # Test wrong amount deposit
+        context = Context(
+            [NCAction(NCActionType.DEPOSIT, token_uid, 2)],
+            tx, owner_address,
+            timestamp=self.get_current_timestamp()
+        )
+        with self.assertRaises(InvalidAmount):
+            runner.call_public_method(self.nc_id, 'deposit_nft', context, name)
+            
+        # Test unauthorized deposit
+        unauthorized_address, _ = self._get_any_address()
+        context = Context(
+            [NCAction(NCActionType.DEPOSIT, token_uid, 1)],
+            tx, unauthorized_address,
+            timestamp=self.get_current_timestamp()
+        )
+        with self.assertRaises(NotAuthorized):
+            runner.call_public_method(self.nc_id, 'deposit_nft', context, name)
+            
+        # Test NFT withdrawal
+        context = Context(
+            [NCAction(NCActionType.WITHDRAWAL, token_uid, 1)],
+            tx, owner_address,
+            timestamp=self.get_current_timestamp()
+        )
+        runner.call_public_method(self.nc_id, 'withdraw_nft', context, name)
+        
+        # Test unauthorized withdrawal
+        context = Context(
+            [NCAction(NCActionType.WITHDRAWAL, token_uid, 1)],
+            tx, unauthorized_address,
+            timestamp=self.get_current_timestamp()
+        )
+        with self.assertRaises(NotAuthorized):
+            runner.call_public_method(self.nc_id, 'withdraw_nft', context, name)
+
+    def test_expiration_edge_cases(self):
+        """Test edge cases for name expiration and renewal."""
+        self.initialize_contract()
+        runner = self.runner
+        
+        # Register a name
+        name = "expiration-test"
+        owner_address = self._register_name(name, self.registration_fee)
+        tx = self._get_any_tx()
+        
+        # Get initial expiration info
+        expiration_info = runner.call_view_method(self.nc_id, 'get_name_expiration_info', name)
+        self.assertEqual(expiration_info['status'], 'active')
+        
+        # Simulate time passing to expiration
+        self.clock.advance(365 * 24 * 60 * 60)  # 1 year
+        expiration_info = runner.call_view_method(self.nc_id, 'get_name_expiration_info', name)
+        self.assertEqual(expiration_info['status'], 'grace_period')
+        
+        # Test renewal during grace period
+        context = Context(
+            [NCAction(NCActionType.DEPOSIT, self.token_uid, self.registration_fee)],
+            tx, owner_address,
+            timestamp=self.get_current_timestamp()
+        )
+        runner.call_public_method(self.nc_id, 'renew_name', context, name)
+        
+        # Verify renewed status
+        expiration_info = runner.call_view_method(self.nc_id, 'get_name_expiration_info', name)
+        self.assertEqual(expiration_info['status'], 'active')
+        
+        # Simulate time passing beyond grace period
+        self.clock.advance(45 * 24 * 60 * 60)  # 45 days (past 30-day grace period)
+        expiration_info = runner.call_view_method(self.nc_id, 'get_name_expiration_info', name)
+        self.assertEqual(expiration_info['status'], 'available')
+        
+        # Try to renew after grace period
+        context = Context(
+            [NCAction(NCActionType.DEPOSIT, self.token_uid, self.registration_fee)],
+            tx, owner_address,
+            timestamp=self.get_current_timestamp()
+        )
+        with self.assertRaises(NameExpired):
+            runner.call_public_method(self.nc_id, 'renew_name', context, name)
 
     def test_token_validation(self):
         self.initialize_contract()
