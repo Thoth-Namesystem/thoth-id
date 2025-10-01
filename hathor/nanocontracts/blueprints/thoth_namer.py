@@ -1,5 +1,4 @@
 from typing import NamedTuple, Optional
-from datetime import datetime, timedelta
 from hathor.crypto.util import get_address_b58_from_bytes
 from hathor.nanocontracts.blueprint import Blueprint
 from hathor.nanocontracts.context import Context
@@ -10,6 +9,7 @@ from hathor.nanocontracts.types import (
     NCAction,
     NCActionType,
     TokenUid,
+    Timestamp,
     public,
     view
 )
@@ -18,13 +18,17 @@ from hathor.crypto.util import get_address_from_public_key
 HTR_UID = b'\x00'
 
 
+SECONDS_PER_YEAR = 365 * 24 * 60 * 60
+SECONDS_PER_DAY = 24 * 60 * 60
+
+
 class NameRecord(NamedTuple):
     """Record for storing name data and NFT information"""
     token_uid: TokenUid
     owner_address: Optional[Address]  # None means NFT is not deposited
     manager_address: Address
     resolving_address: Address
-    expiration_date: str  # Stored as ISO format string
+    expiration_date: Timestamp  # Stored as timestamp
     data: dict[str, str]  # Additional profile data
 
     def update_owner_address(self, new_owner_address: Optional[Address]) -> 'NameRecord':
@@ -49,7 +53,7 @@ class NameRecord(NamedTuple):
             data=self.data
         )
 
-    def update_expiration_date(self, new_expiration_date: str) -> 'NameRecord':
+    def update_expiration_date(self, new_expiration_date: Timestamp) -> 'NameRecord':
         """Create a new NameRecord with updated expiration_date."""
         return NameRecord(
             token_uid=self.token_uid,
@@ -153,15 +157,15 @@ class ThothNamer(Blueprint):
         """Register a new name under the domain by minting an NFT."""
         if not self.validate_name(name):
             raise InvalidNameFormat
-        if not self.is_name_available(name):
+        if not self.is_name_available(name, ctx.timestamp):
             if name in self.registered_names:
                 record = self.registered_names[name]
-                expiration_date = self._string_to_datetime(record.expiration_date)
-                if expiration_date > datetime.today():
+                expiration_date = record.expiration_date
+                if expiration_date > ctx.timestamp:
                     raise NameAlreadyExists('Name is already registered')
                 else:
-                    grace_period_end = expiration_date + timedelta(days=self.grace_period_days)
-                    raise NameInGracePeriod(f'Name is in grace period until {grace_period_end.isoformat()}')
+                    grace_period_end = expiration_date + self.grace_period_days * SECONDS_PER_DAY
+                    raise NameInGracePeriod(f'Name is in grace period until {grace_period_end}')
         if not (0 < len(token_symbol) <= self.max_token_symbol_length):
             raise InvalidTokenSymbol(f'Token symbol must be between 1 and {self.max_token_symbol_length} characters')
 
@@ -170,7 +174,7 @@ class ThothNamer(Blueprint):
         years_of_access = self._get_years_of_access(ctx, fee)
 
         # Calculate expiration date
-        expiration_date = datetime.today() + timedelta(days=years_of_access * 365)
+        expiration_date = ctx.timestamp + years_of_access * SECONDS_PER_YEAR
 
         # Mint new NFT and create name record
         token_uid = self._mint_name_nft(name, token_symbol)
@@ -179,7 +183,7 @@ class ThothNamer(Blueprint):
             owner_address=ctx.caller_id,  # NFT starts in user's wallet
             manager_address=ctx.caller_id,
             resolving_address=ctx.caller_id,
-            expiration_date=self._datetime_to_string(expiration_date),
+            expiration_date=expiration_date,
             data={}  # Initialize with empty data dictionary
         )
         
@@ -334,8 +338,8 @@ class ThothNamer(Blueprint):
         years_of_access = self._get_years_of_access(ctx, fee)
 
         # Calculate new expiration date
-        current_expiration = self._string_to_datetime(record.expiration_date)
-        new_expiration_date = max(current_expiration, datetime.today()) + timedelta(days=years_of_access * 365)
+        current_expiration = record.expiration_date
+        new_expiration_date = max(current_expiration, ctx.timestamp) + years_of_access * SECONDS_PER_YEAR
 
         # Update expiration in record
         self.registered_names[name] = record.update_expiration_date(new_expiration_date)
@@ -415,7 +419,7 @@ class ThothNamer(Blueprint):
         self.grace_period_days = new_grace_period_days
 
     @view
-    def is_name_available(self, name: str) -> bool:
+    def is_name_available(self, name: str, now_timestamp: Timestamp) -> bool:
         """Check if a name is available for registration.
         
         A name is available if:
@@ -426,15 +430,15 @@ class ThothNamer(Blueprint):
             return True
             
         record = self.registered_names[name]
-        expiration_date = self._string_to_datetime(record.expiration_date)
-        grace_period_end = expiration_date + timedelta(days=self.grace_period_days)
+        expiration_date = record.expiration_date
+        grace_period_end = expiration_date + self.grace_period_days * SECONDS_PER_DAY
         
-        return datetime.today() > grace_period_end
+        return now_timestamp > grace_period_end
 
     @view
-    def resolve_name(self, name: str) -> str:
+    def resolve_name(self, name: str, now_timestamp: Timestamp) -> str:
         """Get the resolving address associated with a name."""
-        self._check_name_expired(name)
+        self._check_name_expired(name, now_timestamp)
         resolving_address = self.registered_names[name].resolving_address
         return get_address_b58_from_bytes(resolving_address)
 
@@ -462,22 +466,21 @@ class ThothNamer(Blueprint):
         return get_address_b58_from_bytes(record.owner_address)
 
     @view
-    def get_name_expiration_info(self, name: str) -> dict[str, str]:
+    def get_name_expiration_info(self, name: str, now_timestamp: Timestamp) -> dict[str, str]:
         """Get detailed expiration information for a name.
         
         Returns a dictionary containing:
-        - expiration_date: The expiration date in ISO format
-        - grace_period_end: The grace period end date in ISO format
+        - expiration_date: The expiration date in seconds (timestamp)
+        - grace_period_end: The grace period end date in seconds (timestamp)
         - status: Current status (active, grace_period, or available)
-        - days_remaining: Days until expiration (or until grace period ends if expired)
         """
         if name not in self.registered_names:
             raise NameNotFound
 
         record = self.registered_names[name]
-        expiration_date = self._string_to_datetime(record.expiration_date)
-        grace_period_end = expiration_date + timedelta(days=self.grace_period_days)
-        today = datetime.today()
+        expiration_date = record.expiration_date
+        grace_period_end = expiration_date + self.grace_period_days * SECONDS_PER_DAY
+        today = now_timestamp
         
         if today < expiration_date:
             status = 'active'
@@ -487,19 +490,19 @@ class ThothNamer(Blueprint):
             status = 'available'
             
         return {
-            'expiration_date': expiration_date.isoformat(),
-            'grace_period_end': grace_period_end.isoformat(),
+            'expiration_date': expiration_date,
+            'grace_period_end': grace_period_end,
             'status': status,
         }
         
     @view
-    def get_name_expiration_date(self, name: str) -> datetime:
+    def get_name_expiration_date(self, name: str) -> Timestamp:
         """Get the expiration date of a name registration."""
         if name not in self.registered_names:
             raise NameNotFound
 
         record = self.registered_names[name]
-        return self._string_to_datetime(record.expiration_date)
+        return record.expiration_date
 
     @view
     def validate_name(self, name: str) -> bool:
@@ -579,7 +582,7 @@ class ThothNamer(Blueprint):
         return self.domain
         
     @view
-    def check_name_ownership(self, name: str, address: Address) -> bool:
+    def check_name_ownership(self, name: str, address: Address, now_timestamp: Timestamp) -> bool:
         """Check if a specific name is owned by an address.
         
         Args:
@@ -597,14 +600,14 @@ class ThothNamer(Blueprint):
             return False
             
         # Check if expired
-        expiration_date = self._string_to_datetime(record.expiration_date)
-        if expiration_date < datetime.today():
+        expiration_date = record.expiration_date
+        if expiration_date < now_timestamp:
             return False
             
         return True
         
     @view
-    def check_name_status(self, name: str) -> str:
+    def check_name_status(self, name: str, now_timestamp: Timestamp) -> str:
         """Check the status of a specific name.
         
         Args:
@@ -617,11 +620,11 @@ class ThothNamer(Blueprint):
             return 'available'
             
         record = self.registered_names[name]
-        expiration_date = self._string_to_datetime(record.expiration_date)
+        expiration_date = record.expiration_date
         
-        if expiration_date < datetime.today():
-            grace_period_end = expiration_date + timedelta(days=self.grace_period_days)
-            if datetime.today() > grace_period_end:
+        if expiration_date < now_timestamp:
+            grace_period_end = expiration_date + self.grace_period_days * SECONDS_PER_DAY
+            if now_timestamp > grace_period_end:
                 return 'available'
             return 'grace_period'
             
@@ -802,40 +805,15 @@ class ThothNamer(Blueprint):
 
         return action.amount // fee
 
-    def _check_name_expired(self, name: str) -> bool:
+    def _check_name_expired(self, name: str, now_timestamp: Timestamp) -> bool:
         """Check if a name registration has expired."""
         if name not in self.registered_names:
             raise NameNotFound
 
         record = self.registered_names[name]
-        expiration_date = self._string_to_datetime(record.expiration_date)
-        if expiration_date < datetime.today():
+        expiration_date = record.expiration_date
+        if expiration_date < now_timestamp:
             raise NameExpired('Name registration has expired')
-
-    def _datetime_to_string(self, dt: datetime) -> str:
-        """Convert datetime to ISO format string for storage.
-        
-        Args:
-            dt: The datetime object to convert (must be timezone-naive)
-            
-        Returns:
-            str: The datetime in ISO format
-        """
-        if dt.tzinfo is not None:
-            raise InvalidExpiration('Datetime must be timezone-naive')
-            
-        return dt.isoformat()
-
-    def _string_to_datetime(self, dt_str: str) -> datetime:
-        """Convert ISO format string back to datetime for calculations.
-        
-        Args:
-            dt_str: The ISO format datetime string
-            
-        Returns:
-            datetime: The parsed datetime object
-        """
-        return datetime.fromisoformat(dt_str)
     
     def _add_name_to_manager(self, manager_address: Address, name: str) -> None:
         """Add a name to a manager's list of managed names."""
