@@ -17,16 +17,6 @@ from hathor.crypto.util import get_address_from_public_key
 
 HTR_UID = b'\x00'
 
-# Validation constants
-MAX_PROFILE_DATA_ENTRIES = 20     # Maximum number of profile data entries
-MAX_PROFILE_KEY_LENGTH = 50       # Maximum length for profile data keys
-MAX_PROFILE_VALUE_LENGTH = 1000   # Maximum length for profile data values
-MAX_TOKEN_SYMBOL_LENGTH = 5       # Maximum length for token symbols
-MAX_TOTAL_PROFILE_SIZE = 10000    # Maximum total size of all profile data in bytes
-
-# Time constants (in days)
-GRACE_PERIOD_DAYS = 30            # Grace period after expiration before name becomes available
-
 
 class NameRecord(NamedTuple):
     """Record for storing name data and NFT information"""
@@ -120,9 +110,24 @@ class ThothNamer(Blueprint):
     base_fee: Amount  # Base fee for registering a name
     total_fee: Amount  # Total fees collected
     fee_multiplier: dict[int, int]
+    max_profile_data_entries: int # Maximum number of profile data entries
+    max_profile_key_length: int # Maximum length for profile data keys
+    max_profile_value_length: int # Maximum length for profile data values
+    max_token_symbol_length: int # Maximum length for token symbols
+    max_total_profile_size: int # Maximum total size of all profile data in bytes
+    grace_period_days: int # Grace period after expiration before name becomes available
 
     @public
-    def initialize(self, ctx: Context, domain: str, base_fee: Amount) -> None:
+    def initialize(self, 
+                   ctx: Context, 
+                   domain: str, 
+                   base_fee: Amount,
+                   max_profile_data_entries: int = 20, 
+                   max_profile_key_length: int = 50, 
+                   max_profile_value_length: int = 1000, 
+                   max_token_symbol_length: int = 5, 
+                   max_total_profile_size: int = 10000, 
+                   grace_period_days: int = 30) -> None:
         """Initialize the name service with a base domain and registration fee."""
         if not domain:
             raise InvalidDomain('Domain cannot be empty.')
@@ -136,6 +141,12 @@ class ThothNamer(Blueprint):
         self.fee_multiplier[3] = 20
         self.fee_multiplier[4] = 10
         self.fee_multiplier[5] = 1
+        self.max_profile_data_entries = max_profile_data_entries
+        self.max_profile_key_length = max_profile_key_length
+        self.max_profile_value_length = max_profile_value_length
+        self.max_token_symbol_length = max_token_symbol_length
+        self.max_total_profile_size = max_total_profile_size
+        self.grace_period_days = grace_period_days
 
     @public(allow_deposit=True, allow_withdrawal=False)
     def create_name(self, ctx: Context, name: str, token_symbol: str) -> None:
@@ -149,10 +160,10 @@ class ThothNamer(Blueprint):
                 if expiration_date > datetime.today():
                     raise NameAlreadyExists('Name is already registered')
                 else:
-                    grace_period_end = expiration_date + timedelta(days=GRACE_PERIOD_DAYS)
+                    grace_period_end = expiration_date + timedelta(days=self.grace_period_days)
                     raise NameInGracePeriod(f'Name is in grace period until {grace_period_end.isoformat()}')
-        if not (0 < len(token_symbol) <= MAX_TOKEN_SYMBOL_LENGTH):
-            raise InvalidTokenSymbol(f'Token symbol must be between 1 and {MAX_TOKEN_SYMBOL_LENGTH} characters')
+        if not (0 < len(token_symbol) <= self.max_token_symbol_length):
+            raise InvalidTokenSymbol(f'Token symbol must be between 1 and {self.max_token_symbol_length} characters')
 
         # Verify fee payment
         fee = self.calculate_fee(name)
@@ -224,8 +235,8 @@ class ThothNamer(Blueprint):
         
         record = self.registered_names[name]
         # Validate total number of keys
-        if len(record.data) >= MAX_PROFILE_DATA_ENTRIES and key not in record.data:
-            raise TooManyDataKeys(f'Maximum of {MAX_PROFILE_DATA_ENTRIES} profile data keys allowed')
+        if len(record.data) >= self.max_profile_data_entries and key not in record.data:
+            raise TooManyDataKeys(f'Maximum of {self.max_profile_data_entries} profile data keys allowed')
             
         # Validate key format and total size
         self.validate_key_format(key, value, record.data)
@@ -355,6 +366,54 @@ class ThothNamer(Blueprint):
             raise InvalidMultiplier('Multiplier must be a positive value.')
         self.fee_multiplier[length] = new_multiplier
 
+    @public(allow_actions=False)
+    def change_max_profile_data_entries(self, ctx: Context, new_max_profile_data_entries: int) -> None:
+        """Change the maximum number of profile data entries."""
+        self._only_dev(ctx)
+        if new_max_profile_data_entries <= 0:
+            raise InvalidMaxProfileDataEntries('Maximum number of profile data entries must be a positive value.')
+        self.max_profile_data_entries = new_max_profile_data_entries
+
+    @public(allow_actions=False)
+    def change_max_profile_key_length(self, ctx: Context, new_max_profile_key_length: int) -> None:
+        """Change the maximum length of profile data keys."""
+        self._only_dev(ctx)
+        if new_max_profile_key_length <= 0:
+            raise InvalidMaxProfileKeyLength('Maximum length of profile data keys must be a positive value.')
+        self.max_profile_key_length = new_max_profile_key_length
+
+    @public(allow_actions=False)
+    def change_max_profile_value_length(self, ctx: Context, new_max_profile_value_length: int) -> None:
+        """Change the maximum length of profile data values."""
+        self._only_dev(ctx)
+        if new_max_profile_value_length <= 0:
+            raise InvalidMaxProfileValueLength('Maximum length of profile data values must be a positive value.')
+        self.max_profile_value_length = new_max_profile_value_length
+
+    @public(allow_actions=False)
+    def change_max_token_symbol_length(self, ctx: Context, new_max_token_symbol_length: int) -> None:
+        """Change the maximum length of token symbols."""
+        self._only_dev(ctx)
+        if new_max_token_symbol_length <= 0:
+            raise InvalidMaxTokenSymbolLength('Maximum length of token symbols must be a positive value.')
+        self.max_token_symbol_length = new_max_token_symbol_length
+
+    @public(allow_actions=False)
+    def change_max_total_profile_size(self, ctx: Context, new_max_total_profile_size: int) -> None:
+        """Change the maximum total size of all profile data."""
+        self._only_dev(ctx)
+        if new_max_total_profile_size <= 0:
+            raise InvalidMaxTotalProfileSize('Maximum total size of all profile data must be a positive value.')
+        self.max_total_profile_size = new_max_total_profile_size
+
+    @public(allow_actions=False)
+    def change_grace_period_days(self, ctx: Context, new_grace_period_days: int) -> None:
+        """Change the grace period days."""
+        self._only_dev(ctx)
+        if new_grace_period_days <= 0:
+            raise InvalidGracePeriodDays('Grace period days must be a positive value.')
+        self.grace_period_days = new_grace_period_days
+
     @view
     def is_name_available(self, name: str) -> bool:
         """Check if a name is available for registration.
@@ -368,7 +427,7 @@ class ThothNamer(Blueprint):
             
         record = self.registered_names[name]
         expiration_date = self._string_to_datetime(record.expiration_date)
-        grace_period_end = expiration_date + timedelta(days=GRACE_PERIOD_DAYS)
+        grace_period_end = expiration_date + timedelta(days=self.grace_period_days)
         
         return datetime.today() > grace_period_end
 
@@ -417,7 +476,7 @@ class ThothNamer(Blueprint):
 
         record = self.registered_names[name]
         expiration_date = self._string_to_datetime(record.expiration_date)
-        grace_period_end = expiration_date + timedelta(days=GRACE_PERIOD_DAYS)
+        grace_period_end = expiration_date + timedelta(days=self.grace_period_days)
         today = datetime.today()
         
         if today < expiration_date:
@@ -492,16 +551,16 @@ class ThothNamer(Blueprint):
         - No control characters allowed (except newline, tab)
         """
         # Validate key
-        if not isinstance(key, str) or not key or len(key) > MAX_PROFILE_KEY_LENGTH:
-            raise InvalidDataKey(f'Key must be between 1 and {MAX_PROFILE_KEY_LENGTH} characters')
+        if not isinstance(key, str) or not key or len(key) > self.max_profile_key_length:
+            raise InvalidDataKey(f'Key must be between 1 and {self.max_profile_key_length} characters')
         
         # Only allow alphanumeric and underscores in keys
         if not key.replace('_', '').isalnum():
             raise InvalidDataKey('Key must contain only letters, numbers, and underscores')
         
         # Validate value
-        if not isinstance(value, str) or not value or len(value) > MAX_PROFILE_VALUE_LENGTH:
-            raise InvalidDataValue(f'Value must be between 1 and {MAX_PROFILE_VALUE_LENGTH} characters')
+        if not isinstance(value, str) or not value or len(value) > self.max_profile_value_length:
+            raise InvalidDataValue(f'Value must be between 1 and {self.max_profile_value_length} characters')
             
         # Check for control characters in value (allow newline, tab, carriage return)
         if value.find('\x00') >= 0:  # Null byte
@@ -561,7 +620,7 @@ class ThothNamer(Blueprint):
         expiration_date = self._string_to_datetime(record.expiration_date)
         
         if expiration_date < datetime.today():
-            grace_period_end = expiration_date + timedelta(days=GRACE_PERIOD_DAYS)
+            grace_period_end = expiration_date + timedelta(days=self.grace_period_days)
             if datetime.today() > grace_period_end:
                 return 'available'
             return 'grace_period'
@@ -630,6 +689,36 @@ class ThothNamer(Blueprint):
             'multipliers': self.fee_multiplier,
             'default_multiplier': self.fee_multiplier[5]
         }
+
+    @view
+    def get_max_profile_data_entries(self) -> int:
+        """Get the maximum number of profile data entries."""
+        return self.max_profile_data_entries
+
+    @view
+    def get_max_profile_key_length(self) -> int:
+        """Get the maximum length of profile data keys."""
+        return self.max_profile_key_length
+
+    @view
+    def get_max_profile_value_length(self) -> int:
+        """Get the maximum length of profile data values."""
+        return self.max_profile_value_length
+
+    @view
+    def get_max_token_symbol_length(self) -> int:
+        """Get the maximum length of token symbols."""
+        return self.max_token_symbol_length
+
+    @view
+    def get_max_total_profile_size(self) -> int:
+        """Get the maximum total size of all profile data."""
+        return self.max_total_profile_size
+
+    @view
+    def get_grace_period_days(self) -> int:
+        """Get the grace period days."""
+        return self.grace_period_days
 
     def _only_dev(self, ctx: Context) -> None:
         """Check if the caller is the developer."""
@@ -955,4 +1044,28 @@ class NameInGracePeriod(NCFail):
 
 class InvalidParameter(NCFail):
     """Raised when an invalid parameter value is provided to a method."""
+    pass
+
+class InvalidMaxProfileDataEntries(NCFail):
+    """Raised when an invalid maximum number of profile data entries is provided."""
+    pass
+
+class InvalidMaxProfileKeyLength(NCFail):
+    """Raised when an invalid maximum length of profile data keys is provided."""
+    pass
+
+class InvalidMaxProfileValueLength(NCFail):
+    """Raised when an invalid maximum length of profile data values is provided."""
+    pass
+
+class InvalidMaxTokenSymbolLength(NCFail):
+    """Raised when an invalid maximum length of token symbols is provided."""
+    pass
+
+class InvalidMaxTotalProfileSize(NCFail):
+    """Raised when an invalid maximum total size of all profile data is provided."""
+    pass
+
+class InvalidGracePeriodDays(NCFail):
+    """Raised when an invalid grace period days is provided."""
     pass
