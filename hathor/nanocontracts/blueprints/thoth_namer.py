@@ -1,5 +1,4 @@
 from typing import NamedTuple, Optional
-from hathor.crypto.util import get_address_b58_from_bytes
 from hathor.nanocontracts.blueprint import Blueprint
 from hathor.nanocontracts.context import Context
 from hathor.nanocontracts.exception import NCFail
@@ -13,7 +12,6 @@ from hathor.nanocontracts.types import (
     public,
     view
 )
-from hathor.crypto.util import get_address_from_public_key
 
 HTR_UID = b'\x00'
 
@@ -461,7 +459,7 @@ class ThothNamer(Blueprint):
         """Get the resolving address associated with a name."""
         self._check_name_expired(name, now_timestamp)
         resolving_address = self.registered_names[name].resolving_address
-        return get_address_b58_from_bytes(resolving_address)
+        return resolving_address.hex()
 
     @view
     def get_name_data(self, name: str) -> dict[str, str]:
@@ -473,7 +471,7 @@ class ThothNamer(Blueprint):
         return self._serialize_name_record(record)
 
     @view
-    def get_name_owner(self, name: str) -> Address:
+    def get_name_owner(self, name: str) -> str:
         """Get the name owner's address."""
         if name not in self.registered_names:
             raise NameNotFound
@@ -484,7 +482,7 @@ class ThothNamer(Blueprint):
                 on the contract, we can\'t say for sure who is \
                 the owner at this moment.')
 
-        return get_address_b58_from_bytes(record.owner_address)
+        return record.owner_address.hex()
 
     @view
     def get_name_expiration_info(self, name: str, now_timestamp: Timestamp) -> dict[str, str]:
@@ -593,9 +591,9 @@ class ThothNamer(Blueprint):
         return True
 
     @view
-    def get_dev_address(self) -> Address:
+    def get_dev_address(self) -> str:
         """Get the developer's address."""
-        return get_address_b58_from_bytes(self.dev_address)
+        return self.dev_address.hex()
 
     @view
     def get_contract_domain(self) -> str:
@@ -776,20 +774,6 @@ class ThothNamer(Blueprint):
 
         return self.registered_names[name].owner_address
 
-    # No idea if the usage of this function and the "get_public_key" are valid.
-    def _get_contract_address(self) -> Address:
-        """Get the contract's own address."""
-        # Get the contract's public key
-        contract_pubkey = self._get_public_key()
-
-        # Convert to address
-        return get_address_from_public_key(contract_pubkey)
-
-    def _get_public_key(self) -> bytes:
-        """Get the contract's public key."""
-        # This should be implemented by the contract runtime
-        raise NotImplementedError('Contract public key access not implemented')
-
     def _get_action(self, ctx: Context) -> NCAction:
         """Return the only action available; fails otherwise."""
         if len(ctx.actions) != 1:
@@ -863,9 +847,9 @@ class ThothNamer(Blueprint):
     def _serialize_name_record(self, record: NameRecord) -> dict[str, str]:
         base_data = {
             'token_uid': record.token_uid.hex(),
-            'owner_address': 'None' if not record.is_deposited else get_address_b58_from_bytes(record.owner_address),
-            'manager_address': get_address_b58_from_bytes(record.manager_address),
-            'resolving_address': get_address_b58_from_bytes(record.resolving_address),
+            'owner_address': 'None' if not record.is_deposited else record.owner_address.hex(),
+            'manager_address': record.manager_address.hex(),
+            'resolving_address': record.resolving_address.hex(),
             'expiration_date': record.expiration_date
         }
         # Add profile data
