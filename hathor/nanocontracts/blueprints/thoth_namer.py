@@ -1,4 +1,4 @@
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 from hathor.nanocontracts.blueprint import Blueprint
 from hathor.nanocontracts.context import Context
 from hathor.nanocontracts.exception import NCFail
@@ -30,7 +30,7 @@ class NameRecord(NamedTuple):
     expiration_date: Timestamp  # Stored as timestamp
     data: dict[str, str]  # Additional profile data
 
-    def update_owner_address(self, new_owner_address: Optional[Address]) -> 'NameRecord':
+    def update_owner_address(self, new_owner_address: Address) -> 'NameRecord':
         """Create a new NameRecord with updated owner_address."""
         return NameRecord(
             token_uid=self.token_uid,
