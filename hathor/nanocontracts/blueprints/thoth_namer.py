@@ -197,7 +197,7 @@ class ThothNamer(Blueprint):
         token_uid = self._mint_name_nft(name, token_symbol)
         self.registered_names[name] = NameRecord(
             token_uid=token_uid,
-            owner_address=ctx.caller_id,  # NFT starts in user's wallet
+            owner_address=ctx.caller_id, 
             is_deposited=True,
             manager_address=ctx.caller_id,
             resolving_address=ctx.caller_id,
