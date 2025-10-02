@@ -25,7 +25,8 @@ SECONDS_PER_DAY = 24 * 60 * 60
 class NameRecord(NamedTuple):
     """Record for storing name data and NFT information"""
     token_uid: TokenUid
-    owner_address: Optional[Address]  # None means NFT is not deposited
+    owner_address: Address
+    is_deposited: bool
     manager_address: Address
     resolving_address: Address
     expiration_date: Timestamp  # Stored as timestamp
@@ -36,6 +37,7 @@ class NameRecord(NamedTuple):
         return NameRecord(
             token_uid=self.token_uid,
             owner_address=new_owner_address,
+            is_deposited=self.is_deposited,
             manager_address=self.manager_address,
             resolving_address=self.resolving_address,
             expiration_date=self.expiration_date,
@@ -47,6 +49,7 @@ class NameRecord(NamedTuple):
         return NameRecord(
             token_uid=self.token_uid,
             owner_address=self.owner_address,
+            is_deposited=self.is_deposited,
             manager_address=self.manager_address,
             resolving_address=new_resolving_address,
             expiration_date=self.expiration_date,
@@ -58,6 +61,7 @@ class NameRecord(NamedTuple):
         return NameRecord(
             token_uid=self.token_uid,
             owner_address=self.owner_address,
+            is_deposited=self.is_deposited,
             manager_address=self.manager_address,
             resolving_address=self.resolving_address,
             expiration_date=new_expiration_date,
@@ -69,7 +73,20 @@ class NameRecord(NamedTuple):
         return NameRecord(
             token_uid=self.token_uid,
             owner_address=self.owner_address,
+            is_deposited=self.is_deposited,
             manager_address=new_manager_address,
+            resolving_address=self.resolving_address,
+            expiration_date=self.expiration_date,
+            data=self.data
+        )
+
+    def toggle_is_deposited(self) -> 'NameRecord':
+        """Create a new NameRecord with updated is_deposited."""
+        return NameRecord(
+            token_uid=self.token_uid,
+            owner_address=self.owner_address,
+            is_deposited=not self.is_deposited,
+            manager_address=self.manager_address,
             resolving_address=self.resolving_address,
             expiration_date=self.expiration_date,
             data=self.data
@@ -82,6 +99,7 @@ class NameRecord(NamedTuple):
         return NameRecord(
             token_uid=self.token_uid,
             owner_address=self.owner_address,
+            is_deposited=self.is_deposited,
             manager_address=self.manager_address,
             resolving_address=self.resolving_address,
             expiration_date=self.expiration_date,
@@ -96,6 +114,7 @@ class NameRecord(NamedTuple):
         return NameRecord(
             token_uid=self.token_uid,
             owner_address=self.owner_address,
+            is_deposited=self.is_deposited,
             manager_address=self.manager_address,
             resolving_address=self.resolving_address,
             expiration_date=self.expiration_date,
@@ -181,6 +200,7 @@ class ThothNamer(Blueprint):
         self.registered_names[name] = NameRecord(
             token_uid=token_uid,
             owner_address=ctx.caller_id,  # NFT starts in user's wallet
+            is_deposited=True,
             manager_address=ctx.caller_id,
             resolving_address=ctx.caller_id,
             expiration_date=expiration_date,
@@ -265,14 +285,14 @@ class ThothNamer(Blueprint):
         record = self.registered_names[name]
         
         # Check authorization
-        is_owner = record.owner_address == ctx.caller_id
+        is_owner = record.owner_address == ctx.caller_id and record.is_deposited
         is_manager = record.manager_address == ctx.caller_id
         
         if not (is_owner or is_manager):
             raise NotAuthorized('Only the owner or current manager can change the manager address')
             
         # If caller is owner, verify NFT is deposited
-        if is_owner and record.owner_address is None:
+        if is_owner and not record.is_deposited:
             raise OwnershipNotReliable('The token must be deposited to change manager as owner')
             
         # Update manager mappings
@@ -300,8 +320,11 @@ class ThothNamer(Blueprint):
         """Deposit NFT to enable name management."""
         if name not in self.registered_names:
             raise NameNotFound
-
+        
         record = self.registered_names[name]
+        if record.is_deposited:
+            raise AlreadyDeposited('The token is already deposited')
+        
         self._check_action_record_token(ctx, record.token_uid, NCActionType.DEPOSIT)
         self.registered_names[name] = record.update_owner_address(new_owner_address=ctx.caller_id)
 
@@ -314,10 +337,8 @@ class ThothNamer(Blueprint):
         record = self.registered_names[name]
 
         # Verify deposit ownership
-        if record.owner_address is None:
-            raise OwnershipNotReliable('The token is not deposited \
-                on the contract, we can\'t say for sure who is \
-                the owner at this moment.')
+        if not record.is_deposited:
+            raise NotDeposited('The token is not deposited')
         if record.owner_address != ctx.caller_id:
             raise NotAuthorized('You are not the owner of the token.')
         self._check_action_record_token(ctx, record.token_uid, NCActionType.WITHDRAWAL)
@@ -458,7 +479,7 @@ class ThothNamer(Blueprint):
             raise NameNotFound
 
         record = self.registered_names[name]
-        if record.owner_address:
+        if not record.is_deposited:
             raise OwnershipNotReliable('The token is not deposited \
                 on the contract, we can\'t say for sure who is \
                 the owner at this moment.')
@@ -733,7 +754,7 @@ class ThothNamer(Blueprint):
         # Create NFT metadata
         nft_name = f'{name[:26]}.{self.domain}'
         
-        token_uid = self.syscall.create_token(nft_name, token_symbol, True, True)
+        token_uid = self.syscall.create_token(nft_name, token_symbol, 1, True, True)
         
         # Return the token UID
         return token_uid
@@ -842,7 +863,7 @@ class ThothNamer(Blueprint):
     def _serialize_name_record(self, record: NameRecord) -> dict[str, str]:
         base_data = {
             'token_uid': record.token_uid.hex(),
-            'owner_address': 'None' if record.owner_address is None else get_address_b58_from_bytes(record.owner_address),
+            'owner_address': 'None' if not record.is_deposited else get_address_b58_from_bytes(record.owner_address),
             'manager_address': get_address_b58_from_bytes(record.manager_address),
             'resolving_address': get_address_b58_from_bytes(record.resolving_address),
             'expiration_date': record.expiration_date
@@ -1046,4 +1067,12 @@ class InvalidMaxTotalProfileSize(NCFail):
 
 class InvalidGracePeriodDays(NCFail):
     """Raised when an invalid grace period days is provided."""
+    pass
+
+class AlreadyDeposited(NCFail):
+    """Raised when attempting to deposit a token that is already deposited."""
+    pass
+
+class NotDeposited(NCFail):
+    """Raised when attempting to perform an operation on a token that is not deposited."""
     pass
