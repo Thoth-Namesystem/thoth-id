@@ -127,6 +127,7 @@ class ThothNamer(Blueprint):
     domain: str  # Base domain (e.g., "htr")
     registered_names: dict[str, NameRecord]  # Mapping of names to NameRecord objects
     manager_names: dict[Address, list[str]]  # Mapping of manager addresses to their managed names
+    manager_primary_name: dict[Address, str]  # Mapping of manager addresses to their primary name
     dev_address: Address  # Developer address for receiving fees
     base_fee: Amount  # Base fee for registering a name
     total_fee: Amount  # Total fees collected
@@ -207,7 +208,10 @@ class ThothNamer(Blueprint):
         
         # Add to manager's list of names
         self._add_name_to_manager(ctx.caller_id, name)
-        
+
+        if self._check_manager_has_only_one_name(ctx.caller_id):
+            self._set_manager_primary_name(ctx.caller_id, name)
+
         self.total_fee += fee * years_of_access
 
     @public(allow_actions=False)
@@ -297,6 +301,16 @@ class ThothNamer(Blueprint):
         self._update_name_manager(name, record.manager_address, new_manager_address)
             
         self.registered_names[name] = record.update_manager_address(new_manager_address)
+
+    @public(allow_actions=False)
+    def change_manager_primary_name(self, ctx: Context, name: str) -> None:
+        """Change the primary name for a manager."""
+        if name not in self.registered_names:
+            raise NameNotFound
+        record = self.registered_names[name]
+        if record.manager_address != ctx.caller_id:
+            raise NotAuthorized('Only the manager can change the primary name')
+        self._set_manager_primary_name(ctx.caller_id, name)
 
     @public(allow_actions=False)
     def change_resolving_address(self,
@@ -444,6 +458,10 @@ class ThothNamer(Blueprint):
         A name is available if:
         1. It doesn't exist in the registry, or
         2. It's expired AND past the grace period
+        
+        Args:
+            name: The name to check
+            now_timestamp: The current timestamp to check against
         """
         if name not in self.registered_names:
             return True
@@ -488,6 +506,10 @@ class ThothNamer(Blueprint):
     def get_name_expiration_info(self, name: str, now_timestamp: Timestamp) -> dict[str, str]:
         """Get detailed expiration information for a name.
         
+        Args:
+            name: The name to check
+            now_timestamp: The current timestamp to check against
+            
         Returns a dictionary containing:
         - expiration_date: The expiration date in seconds (timestamp)
         - grace_period_end: The grace period end date in seconds (timestamp)
@@ -607,6 +629,7 @@ class ThothNamer(Blueprint):
         Args:
             name: The name to check
             address: The address to verify ownership for
+            now_timestamp: The current timestamp to check against
             
         Returns:
             bool: True if the address owns the name, False otherwise
@@ -631,6 +654,7 @@ class ThothNamer(Blueprint):
         
         Args:
             name: The name to check
+            now_timestamp: The current timestamp to check against
             
         Returns:
             str: 'active', 'expired', or 'available'
@@ -696,6 +720,11 @@ class ThothNamer(Blueprint):
             list[str]: List of names managed by this address (empty if none)
         """
         return self.manager_names.get(manager_address, [])
+
+    @view
+    def get_manager_primary_name(self, manager_address: Address) -> str:
+        """Get the primary name for a manager."""
+        return self.manager_primary_name.get(manager_address, '')
         
     @view
     def get_fee_structure(self) -> dict[str, dict[str, int]]:
@@ -811,7 +840,12 @@ class ThothNamer(Blueprint):
         return action.amount // fee
 
     def _check_name_expired(self, name: str, now_timestamp: Timestamp) -> bool:
-        """Check if a name registration has expired."""
+        """Check if a name registration has expired.
+        
+        Args:
+            name: The name to check
+            now_timestamp: The current timestamp to check against
+        """
         if name not in self.registered_names:
             raise NameNotFound
 
@@ -855,7 +889,16 @@ class ThothNamer(Blueprint):
         # Add profile data
         base_data.update(record.data)
         return base_data
-    
+
+    def _check_manager_has_only_one_name(self, manager_address: Address) -> bool:
+        """Check if a manager has any names."""
+        if manager_address not in self.manager_names:
+            return False
+        return len(self.manager_names[manager_address]) == 1
+
+    def _set_manager_primary_name(self, manager_address: Address, name: str) -> None:
+        """Set the primary name for a manager."""
+        self.manager_primary_name[manager_address] = name
 
 class NameNotFound(NCFail):
     """Raised when attempting to access a name that is not registered in the system.
