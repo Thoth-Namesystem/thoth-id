@@ -1,0 +1,13 @@
+# Use the official Python image as the base image
+FROM python:3.11-slim-bullseye
+RUN apt-get -qy update
+RUN apt-get -qy install libssl1.1 graphviz librocksdb6.11
+# dev deps for this build start here
+RUN apt-get -qy install libssl-dev libffi-dev build-essential zlib1g-dev libbz2-dev libsnappy-dev liblz4-dev librocksdb-dev cargo git pkg-config
+# Set the working directory inside the container
+WORKDIR /app
+
+COPY ./ .
+
+# Install dependencies using Poetry
+RUN pip install poetry && poetry install
