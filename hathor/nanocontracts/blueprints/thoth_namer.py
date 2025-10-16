@@ -20,6 +20,15 @@ SECONDS_PER_YEAR = 365 * 24 * 60 * 60
 SECONDS_PER_DAY = 24 * 60 * 60
 
 
+# Default configuration values
+DEFAULT_MAX_PROFILE_DATA_ENTRIES = 20
+DEFAULT_MAX_PROFILE_KEY_LENGTH = 50
+DEFAULT_MAX_PROFILE_VALUE_LENGTH = 200
+DEFAULT_MAX_TOKEN_SYMBOL_LENGTH = 5
+DEFAULT_MAX_TOTAL_PROFILE_SIZE = 10000
+DEFAULT_GRACE_PERIOD_DAYS = 30
+
+
 class NameRecord(NamedTuple):
     """Record for storing name data and NFT information"""
     token_uid: TokenUid
@@ -144,12 +153,12 @@ class ThothNamer(Blueprint):
                    ctx: Context, 
                    domain: str, 
                    base_fee: Amount,
-                   max_profile_data_entries: int = 20, 
-                   max_profile_key_length: int = 50, 
-                   max_profile_value_length: int = 1000, 
-                   max_token_symbol_length: int = 5, 
-                   max_total_profile_size: int = 10000, 
-                   grace_period_days: int = 30) -> None:
+                   max_profile_data_entries: int,
+                   max_profile_key_length: int,
+                   max_profile_value_length: int,
+                   max_token_symbol_length: int,
+                   max_total_profile_size: int,
+                   grace_period_days: int) -> None:
         """Initialize the name service with a base domain and registration fee."""
         if not domain:
             raise InvalidDomain('Domain cannot be empty.')
@@ -175,15 +184,22 @@ class ThothNamer(Blueprint):
         """Register a new name under the domain by minting an NFT."""
         if not self.validate_name(name):
             raise InvalidNameFormat
-        if not self.is_name_available(name, ctx.timestamp):
-            if name in self.registered_names:
+
+        if name in self.registered_names:
+            # Name exists, check if it can be re-registered
+            if self.is_name_available(name, ctx.timestamp):
+                # It's expired and past grace period, so clean up before re-registering
+                old_record = self.registered_names[name]
+                self._remove_name_from_manager(old_record.manager_address, name)
+            else:
+                # It's not available (active or in grace period)
                 record = self.registered_names[name]
-                expiration_date = record.expiration_date
-                if expiration_date > ctx.timestamp:
+                if record.expiration_date > ctx.timestamp:
                     raise NameAlreadyExists('Name is already registered')
                 else:
-                    grace_period_end = expiration_date + self.grace_period_days * SECONDS_PER_DAY
+                    grace_period_end = record.expiration_date + self.grace_period_days * SECONDS_PER_DAY
                     raise NameInGracePeriod(f'Name is in grace period until {grace_period_end}')
+
         if not (0 < len(token_symbol) <= self.max_token_symbol_length):
             raise InvalidTokenSymbol(f'Token symbol must be between 1 and {self.max_token_symbol_length} characters')
 
@@ -258,20 +274,36 @@ class ThothNamer(Blueprint):
             raise InvalidNameFormat
         if name not in self.registered_names:
             raise NameNotFound
+
+        # Validate key format and total size
+        self.validate_key_format(key, value)
         
         record = self.registered_names[name]
         # Validate total number of keys
         if len(record.data) >= self.max_profile_data_entries and key not in record.data:
             raise TooManyDataKeys(f'Maximum of {self.max_profile_data_entries} profile data keys allowed')
-            
-        # Validate key format and total size
-        self.validate_key_format(key, value, record.data)
         
         # Authorization check
         if record.manager_address != ctx.caller_id:
             raise NotAuthorized('Only the manager can update profile data')
 
         self.registered_names[name] = record.update_data(key, value)
+
+    @public(allow_actions=False)
+    def change_name_owner(self, ctx: Context, name: str, new_owner_address: Address) -> None:
+        """Change the owner address of a name."""
+        if name not in self.registered_names:
+            raise NameNotFound
+
+        record = self.registered_names[name]
+
+        if not record.is_deposited:
+            raise OwnershipNotReliable('The token must be deposited to change owner')
+
+        if record.owner_address != ctx.caller_id:
+            raise NotAuthorized('Only the current owner can change the owner address')
+
+        self.registered_names[name] = record.update_owner_address(new_owner_address)
 
     @public(allow_actions=False)
     def change_manager_address(self,
@@ -332,13 +364,13 @@ class ThothNamer(Blueprint):
         """Deposit NFT to enable name management."""
         if name not in self.registered_names:
             raise NameNotFound
-        
+
         record = self.registered_names[name]
+        self._check_action_record_token(ctx, record.token_uid, NCActionType.DEPOSIT)
         if record.is_deposited:
             raise AlreadyDeposited('The token is already deposited')
-        
-        self._check_action_record_token(ctx, record.token_uid, NCActionType.DEPOSIT)
-        self.registered_names[name] = record.update_owner_address(new_owner_address=ctx.caller_id)
+
+        self.registered_names[name] = record.toggle_is_deposited().update_owner_address(new_owner_address=ctx.caller_id)
 
     @public(allow_deposit=False, allow_withdrawal=True)
     def withdraw_nft(self, ctx: Context, name: str) -> None:
@@ -349,14 +381,14 @@ class ThothNamer(Blueprint):
         record = self.registered_names[name]
 
         # Verify deposit ownership
-        if not record.is_deposited:
-            raise NotDeposited('The token is not deposited')
         if record.owner_address != ctx.caller_id:
             raise NotAuthorized('You are not the owner of the token.')
+        if not record.is_deposited:
+            raise NotDeposited('The token is not deposited')
         self._check_action_record_token(ctx, record.token_uid, NCActionType.WITHDRAWAL)
 
         # Return NFT and revoke authorization
-        self.registered_names[name] = record.update_owner_address(new_owner_address=None)
+        self.registered_names[name] = record.toggle_is_deposited()
 
     @public(allow_deposit=True, allow_withdrawal=False)
     def renew_name(self, ctx: Context, name: str) -> None:
@@ -386,6 +418,12 @@ class ThothNamer(Blueprint):
         if new_fee <= 0:
             raise InvalidFee('Fee must be a positive value.')
         self.base_fee = new_fee
+
+    @public(allow_actions=False)
+    def change_dev_address(self, ctx: Context, new_dev_address: Address) -> None:
+        """Change the dev address."""
+        self._only_dev(ctx)
+        self.dev_address = new_dev_address
 
     @public(allow_actions=False)
     def change_fee_multiplier(self, ctx: Context, length: int, new_multiplier: int) -> None:
@@ -531,8 +569,8 @@ class ThothNamer(Blueprint):
             status = 'available'
             
         return {
-            'expiration_date': expiration_date,
-            'grace_period_end': grace_period_end,
+            'expiration_date': str(expiration_date),
+            'grace_period_end': str(grace_period_end),
             'status': status,
         }
         
@@ -727,7 +765,7 @@ class ThothNamer(Blueprint):
         return self.manager_primary_name.get(manager_address, '')
         
     @view
-    def get_fee_structure(self) -> dict[str, dict[str, int]]:
+    def get_fee_structure(self) -> dict[str, int]:
         """Get the complete fee structure information.
         
         Returns a dictionary containing:
@@ -737,7 +775,9 @@ class ThothNamer(Blueprint):
         """
         return {
             'base_fee': self.base_fee,
-            'multipliers': self.fee_multiplier,
+            'three_length_multiplier': self.fee_multiplier[3],
+            'four_length_multiplier': self.fee_multiplier[4],
+            'five_plus_length_multiplier': self.fee_multiplier[5],
             'default_multiplier': self.fee_multiplier[5]
         }
 
@@ -827,7 +867,6 @@ class ThothNamer(Blueprint):
             raise InvalidToken(f'Token different from {token_uid.hex()}.')
         if action.amount != 1:
             raise InvalidAmount('Amount must be 1.')
-        print(action.token_uid, token_uid)
 
     def _get_years_of_access(self, ctx: Context, fee: Amount):
         """Return the number of years that have been bought."""
@@ -856,19 +895,22 @@ class ThothNamer(Blueprint):
     
     def _add_name_to_manager(self, manager_address: Address, name: str) -> None:
         """Add a name to a manager's list of managed names."""
-        if manager_address not in self.manager_names:
-            self.manager_names[manager_address] = []
-        if name not in self.manager_names[manager_address]:
-            self.manager_names[manager_address].append(name)
+        names = list(self.manager_names.get(manager_address, []))
+        if name not in names:
+            names.append(name)
+            self.manager_names[manager_address] = names
             
     def _remove_name_from_manager(self, manager_address: Address, name: str) -> None:
         """Remove a name from a manager's list of managed names."""
         if manager_address in self.manager_names:
-            if name in self.manager_names[manager_address]:
-                names_tuple = self.manager_names[manager_address]
-                names_list = list(names_tuple)
+            names_list = list(self.manager_names[manager_address])
+            if name in names_list:
                 names_list.remove(name)
-                self.manager_names[manager_address] = tuple(names_list)
+                self.manager_names[manager_address] = names_list
+
+            if self.manager_primary_name.get(manager_address) == name and not names_list:
+                del self.manager_primary_name[manager_address]
+
             # Clean up empty lists
             if not self.manager_names[manager_address]:
                 del self.manager_names[manager_address]
@@ -884,7 +926,7 @@ class ThothNamer(Blueprint):
             'owner_address': 'None' if not record.is_deposited else record.owner_address.hex(),
             'manager_address': record.manager_address.hex(),
             'resolving_address': record.resolving_address.hex(),
-            'expiration_date': record.expiration_date
+            'expiration_date': str(record.expiration_date)
         }
         # Add profile data
         base_data.update(record.data)
@@ -1103,3 +1145,6 @@ class AlreadyDeposited(NCFail):
 class NotDeposited(NCFail):
     """Raised when attempting to perform an operation on a token that is not deposited."""
     pass
+
+
+__blueprint__ = ThothNamer
