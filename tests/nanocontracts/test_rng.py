@@ -38,7 +38,7 @@ class AttackerBlueprint(Blueprint):
     @public
     def attack(self, ctx: Context) -> None:
         self.syscall.rng.random = lambda: 0.75  # type: ignore[method-assign]
-        self.syscall.call_public_method(self.target, 'nop', actions=[])
+        self.syscall.get_contract(self.target, blueprint_id=None).public().nop()
 
 
 class NCConsensusTestCase(SimulatorTestCase):
@@ -140,7 +140,7 @@ class NCConsensusTestCase(SimulatorTestCase):
             setattr(NanoRNG, 'random', lambda self: 2)
 
         # protected by Python itself
-        with pytest.raises(TypeError, match='can\'t apply this __setattr__ to _FauxImmutableMeta object'):
+        with pytest.raises(TypeError, match='can\'t apply this __setattr__ to FauxImmutableMeta object'):
             object.__setattr__(NanoRNG, 'random', lambda self: 2)
 
         #
@@ -156,7 +156,7 @@ class NCConsensusTestCase(SimulatorTestCase):
             setattr(rng.__class__, 'random', lambda self: 2)
 
         # protected by Python itself
-        with pytest.raises(TypeError, match='can\'t apply this __setattr__ to _FauxImmutableMeta object'):
+        with pytest.raises(TypeError, match='can\'t apply this __setattr__ to FauxImmutableMeta object'):
             object.__setattr__(rng.__class__, 'random', lambda self: 2)
 
         #
@@ -172,7 +172,7 @@ class NCConsensusTestCase(SimulatorTestCase):
             setattr(NanoRNG, 'new_attr', 123)
 
         # protected by Python itself
-        with pytest.raises(TypeError, match='can\'t apply this __setattr__ to _FauxImmutableMeta object'):
+        with pytest.raises(TypeError, match='can\'t apply this __setattr__ to FauxImmutableMeta object'):
             object.__setattr__(NanoRNG, 'new_attr', 123)
 
         assert rng.random() < 1
@@ -190,7 +190,7 @@ class NCConsensusTestCase(SimulatorTestCase):
         with pytest.raises(AttributeError, match='cannot set attribute `random` on faux-immutable class'):
             setattr(rng1.__class__, 'random', lambda self: 2)
 
-        with pytest.raises(TypeError, match='can\'t apply this __setattr__ to _FauxImmutableMeta object'):
+        with pytest.raises(TypeError, match='can\'t apply this __setattr__ to FauxImmutableMeta object'):
             object.__setattr__(rng1.__class__, 'random', lambda self: 2)
 
     def assertGoodnessOfFitTest(self, observed: list[int], expected: list[int]) -> None:

@@ -13,7 +13,13 @@ class _BaseTest:
         def setUp(self) -> None:
             super().setUp()
             daa = DifficultyAdjustmentAlgorithm(settings=self._settings)
-            verifiers = VertexVerifiers.create_defaults(settings=self._settings, daa=daa, feature_service=Mock())
+            verifiers = VertexVerifiers.create_defaults(
+                reactor=Mock(),
+                settings=self._settings,
+                daa=daa,
+                feature_service=Mock(),
+                tx_storage=Mock(),
+            )
             self._verification_service = VerificationService(settings=self._settings, verifiers=verifiers)
 
         def test_deserialize(self):
@@ -29,7 +35,7 @@ class _BaseTest:
 
             cls = self.get_tx_class()
             tx = cls.create_from_struct(self.tx_bytes, verbose=verbose)
-            self._verification_service.verify_without_storage(tx, self.verification_params)
+            self._verification_service.verify_without_storage(tx, self.get_verification_params())
 
             key, version = v[1]
             self.assertEqual(key, 'version')

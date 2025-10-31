@@ -208,7 +208,7 @@ class NanoHeader(VertexBaseHeader):
         ]
         return b''.join(ret)
 
-    def _serialize_without_header_id(self, *, skip_signature: bool) -> deque[bytes]:
+    def _serialize(self, *, skip_signature: bool) -> bytes:
         """Serialize the header with the option to skip the signature."""
         encoded_method = self.nc_method.encode('ascii')
 
@@ -230,16 +230,14 @@ class NanoHeader(VertexBaseHeader):
             ret.append(self.nc_script)
         else:
             ret.append(leb128.encode_unsigned(0, max_bytes=_NC_SCRIPT_LEN_MAX_BYTES))
-        return ret
-
-    def serialize(self) -> bytes:
-        ret = self._serialize_without_header_id(skip_signature=False)
         ret.appendleft(VertexHeaderId.NANO_HEADER.value)
         return b''.join(ret)
 
+    def serialize(self) -> bytes:
+        return self._serialize(skip_signature=False)
+
     def get_sighash_bytes(self) -> bytes:
-        ret = self._serialize_without_header_id(skip_signature=True)
-        return b''.join(ret)
+        return self._serialize(skip_signature=True)
 
     def is_creating_a_new_contract(self) -> bool:
         """Return true if this transaction is creating a new contract."""
@@ -253,7 +251,7 @@ class NanoHeader(VertexBaseHeader):
             return ContractId(VertexId(self.tx.hash))
         return ContractId(VertexId(self.nc_id))
 
-    def get_blueprint_id(self, block: Block | None = None) -> BlueprintId:
+    def get_blueprint_id(self, block: Block | None = None, *, accept_failed_execution: bool = False) -> BlueprintId:
         """Return the blueprint id."""
         from hathor.nanocontracts.exception import NanoContractDoesNotExist
         from hathor.nanocontracts.types import BlueprintId, ContractId, VertexId as NCVertexId
@@ -296,7 +294,8 @@ class NanoHeader(VertexBaseHeader):
             # otherwise, it failed or skipped execution
             from hathor.transaction.nc_execution_state import NCExecutionState
             assert nc_creation_meta.nc_execution in (NCExecutionState.FAILURE, NCExecutionState.SKIPPED)
-            raise NanoContractDoesNotExist
+            if not accept_failed_execution:
+                raise NanoContractDoesNotExist(f'contract creation is not executed: {self.nc_id.hex()}')
 
         blueprint_id = BlueprintId(NCVertexId(nc_creation.get_nano_header().nc_id))
         return blueprint_id
@@ -307,24 +306,10 @@ class NanoHeader(VertexBaseHeader):
 
     def get_context(self) -> Context:
         """Return a context to be used in a method call."""
-        action_list = self.get_actions()
-
-        meta = self.tx.get_metadata()
-        timestamp: int
-        if meta.first_block is None:
-            # XXX Which timestamp to use when it is on mempool?
-            timestamp = self.tx.timestamp
-        else:
-            assert self.tx.storage is not None
-            first_block = self.tx.storage.get_transaction(meta.first_block)
-            timestamp = first_block.timestamp
-
         from hathor.nanocontracts.context import Context
         from hathor.nanocontracts.types import Address
-        context = Context(
-            actions=action_list,
-            vertex=self.tx,
+        return Context.create_from_vertex(
             caller_id=Address(self.nc_address),
-            timestamp=timestamp,
+            vertex=self.tx,
+            actions=self.get_actions(),
         )
-        return context

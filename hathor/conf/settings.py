@@ -28,10 +28,10 @@ from hathor.utils.named_tuple import validated_named_tuple_from_dict
 
 DECIMAL_PLACES = 2
 
-GENESIS_TOKEN_UNITS = 1 * (10**9)  # 1B
-GENESIS_TOKENS = GENESIS_TOKEN_UNITS * (10**DECIMAL_PLACES)  # 100B
+GENESIS_TOKEN_UNITS = 1 * (10 ** 9)  # 1B
+GENESIS_TOKENS = GENESIS_TOKEN_UNITS * (10 ** DECIMAL_PLACES)  # 100B
 
-HATHOR_TOKEN_UID = b'\x00'
+HATHOR_TOKEN_UID: bytes = b'\x00'
 
 
 @unique
@@ -86,6 +86,16 @@ class HathorSettings(NamedTuple):
 
     GENESIS_TOKENS: int = GENESIS_TOKENS
 
+    # Fee rate settings
+    FEE_PER_OUTPUT: int = 1
+
+    @property
+    def FEE_DIVISOR(self) -> int:
+        """Divisor used for evaluating fee amounts"""
+        result = 1 / self.TOKEN_DEPOSIT_PERCENTAGE
+        assert result.is_integer()
+        return int(result)
+
     # To disable reward halving, just set this to `None` and make sure that INITIAL_TOKEN_UNITS_PER_BLOCK is equal to
     # MINIMUM_TOKEN_UNITS_PER_BLOCK.
     BLOCKS_PER_HALVING: Optional[int] = 2 * 60 * 24 * 365  # 1051200, every 365 days
@@ -95,11 +105,11 @@ class HathorSettings(NamedTuple):
 
     @property
     def INITIAL_TOKENS_PER_BLOCK(self) -> int:
-        return self.INITIAL_TOKEN_UNITS_PER_BLOCK * (10**DECIMAL_PLACES)
+        return self.INITIAL_TOKEN_UNITS_PER_BLOCK * (10 ** DECIMAL_PLACES)
 
     @property
     def MINIMUM_TOKENS_PER_BLOCK(self) -> int:
-        return self.MINIMUM_TOKEN_UNITS_PER_BLOCK * (10**DECIMAL_PLACES)
+        return self.MINIMUM_TOKEN_UNITS_PER_BLOCK * (10 ** DECIMAL_PLACES)
 
     # Assume that: amount < minimum
     # But, amount = initial / (2**n), where n = number_of_halvings. Thus:
@@ -364,17 +374,17 @@ class HathorSettings(NamedTuple):
 
     # Maximum number of sig operations of all inputs on a given tx
     # including the redeemScript in case of MultiSig
-    MAX_TX_SIGOPS_INPUT: int = 255*5
+    MAX_TX_SIGOPS_INPUT: int = 255 * 5
 
     # Maximum number of sig operations of all outputs on a given tx
-    MAX_TX_SIGOPS_OUTPUT: int = 255*5
+    MAX_TX_SIGOPS_OUTPUT: int = 255 * 5
 
     # Maximum number of transactions returned on addresses history API
     MAX_TX_ADDRESSES_HISTORY: int = 150
 
     # Maximum number of elements (inputs and outputs) to be returned on address history API
     # As a normal tx has ~2-4 inputs and 2 outputs, I would say the maximum should be 150*6 = 900 elements
-    MAX_INPUTS_OUTPUTS_ADDRESS_HISTORY: int = 6*MAX_TX_ADDRESSES_HISTORY
+    MAX_INPUTS_OUTPUTS_ADDRESS_HISTORY: int = 6 * MAX_TX_ADDRESSES_HISTORY
 
     # Maximum number of TXs that will be sent by the Mempool API.
     MEMPOOL_API_TX_LIMIT: int = 100
@@ -390,6 +400,7 @@ class HathorSettings(NamedTuple):
     CAPABILITY_SYNC_VERSION: str = 'sync-version'
     CAPABILITY_GET_BEST_BLOCKCHAIN: str = 'get-best-blockchain'
     CAPABILITY_IPV6: str = 'ipv6'  # peers announcing this capability will be relayed ipv6 entrypoints from other peers
+    CAPABILITY_NANO_STATE: str = 'nano-state'  # indicates support for nano-state commands
 
     # Where to download whitelist from
     WHITELIST_URL: Optional[str] = None
@@ -469,7 +480,7 @@ class HathorSettings(NamedTuple):
     ENABLE_NANO_CONTRACTS: NanoContractsSetting = NanoContractsSetting.DISABLED
 
     # List of enabled blueprints.
-    BLUEPRINTS: dict[bytes, 'str'] = {}
+    BLUEPRINTS: dict[bytes, str] = {}
 
     # The consensus algorithm protocol settings.
     CONSENSUS_ALGORITHM: ConsensusSettings = PowSettings()
@@ -569,13 +580,24 @@ def _validate_tokens(genesis_tokens: int, values: dict[str, Any]) -> int:
     assert genesis_token_units is not None, 'GENESIS_TOKEN_UNITS must be set'
     assert decimal_places is not None, 'DECIMAL_PLACES must be set'
 
-    if genesis_tokens != genesis_token_units * (10**decimal_places):
+    if genesis_tokens != genesis_token_units * (10 ** decimal_places):
         raise ValueError(
             f'invalid tokens: GENESIS_TOKENS={genesis_tokens}, GENESIS_TOKEN_UNITS={genesis_token_units}, '
             f'DECIMAL_PLACES={decimal_places}',
         )
 
     return genesis_tokens
+
+
+def _validate_token_deposit_percentage(token_deposit_percentage: float) -> float:
+    """Validate that TOKEN_DEPOSIT_PERCENTAGE results in an integer FEE_DIVISOR."""
+    result = 1 / token_deposit_percentage
+    if not result.is_integer():
+        raise ValueError(
+            f'TOKEN_DEPOSIT_PERCENTAGE must result in an integer FEE_DIVISOR. '
+            f'Got TOKEN_DEPOSIT_PERCENTAGE={token_deposit_percentage}, FEE_DIVISOR={result}'
+        )
+    return token_deposit_percentage
 
 
 _VALIDATORS = dict(
@@ -615,4 +637,7 @@ _VALIDATORS = dict(
     _validate_tokens=pydantic.validator(
         'GENESIS_TOKENS'
     )(_validate_tokens),
+    _validate_token_deposit_percentage=pydantic.validator(
+        'TOKEN_DEPOSIT_PERCENTAGE'
+    )(_validate_token_deposit_percentage),
 )

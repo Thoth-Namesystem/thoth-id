@@ -2,23 +2,9 @@ from hathor.nanocontracts.blueprint import Blueprint
 from hathor.nanocontracts.context import Context
 from hathor.nanocontracts.exception import BlueprintSyntaxError, NCFail, NCInsufficientFunds, NCViewMethodError
 from hathor.nanocontracts.nc_types import make_nc_type_for_arg_type as make_nc_type
-from hathor.nanocontracts.storage import NCBlockStorage, NCMemoryStorageFactory
-from hathor.nanocontracts.storage.backends import MemoryNodeTrieStore
 from hathor.nanocontracts.storage.contract_storage import Balance, BalanceKey
-from hathor.nanocontracts.storage.patricia_trie import PatriciaTrie
-from hathor.nanocontracts.types import (
-    Address,
-    BlueprintId,
-    ContractId,
-    NCDepositAction,
-    NCWithdrawalAction,
-    TokenUid,
-    VertexId,
-    public,
-    view,
-)
-from tests import unittest
-from tests.nanocontracts.utils import TestRunner
+from hathor.nanocontracts.types import Address, NCDepositAction, NCWithdrawalAction, TokenUid, public, view
+from tests.nanocontracts.blueprints.unittest import BlueprintTestCase
 
 STR_NC_TYPE = make_nc_type(str)
 BYTES_NC_TYPE = make_nc_type(bytes)
@@ -61,6 +47,9 @@ class ContainerFields(Blueprint):
 
     @public
     def initialize(self, ctx: Context, items: list[tuple[str, str, bytes, int]]) -> None:
+        self.a = {}
+        self.b = {}
+        self.c = {}
         for key, va, vb, vc in items:
             self._set(self.a, key, va)
             self._set(self.b, key, vb)
@@ -95,46 +84,25 @@ class MyBlueprint(Blueprint):
         return 1
 
 
-class NCBlueprintTestCase(unittest.TestCase):
+class NCBlueprintTestCase(BlueprintTestCase):
     def setUp(self) -> None:
         super().setUp()
-        self.simple_fields_id = ContractId(VertexId(b'1' * 32))
-        self.container_fields_id = ContractId(VertexId(b'2' * 32))
-        self.my_blueprint_id = ContractId(VertexId(b'3' * 32))
-
-        nc_storage_factory = NCMemoryStorageFactory()
-        store = MemoryNodeTrieStore()
-        block_trie = PatriciaTrie(store)
-        block_storage = NCBlockStorage(block_trie)
-        self.manager = self.create_peer('unittests')
-        self.runner = TestRunner(
-            self.manager.tx_storage, nc_storage_factory, block_storage, settings=self._settings, reactor=self.reactor
-        )
-
-        self.blueprint_ids: dict[str, BlueprintId] = {
-            'simple_fields': BlueprintId(VertexId(b'a' * 32)),
-            'container_fields': BlueprintId(VertexId(b'b' * 32)),
-            'my_blueprint': BlueprintId(VertexId(b'c' * 32)),
-        }
-
-        nc_catalog = self.manager.tx_storage.nc_catalog
-        nc_catalog.blueprints[self.blueprint_ids['simple_fields']] = SimpleFields
-        nc_catalog.blueprints[self.blueprint_ids['container_fields']] = ContainerFields
-        nc_catalog.blueprints[self.blueprint_ids['my_blueprint']] = MyBlueprint
+        self.simple_fields_id = self._register_blueprint_class(SimpleFields)
+        self.container_fields_id = self._register_blueprint_class(ContainerFields)
+        self.my_blueprint_id = self._register_blueprint_class(MyBlueprint)
 
         genesis = self.manager.tx_storage.get_all_genesis()
         self.tx = [t for t in genesis if t.is_transaction][0]
 
     def test_simple_fields(self) -> None:
-        blueprint_id = self.blueprint_ids['simple_fields']
         nc_id = self.simple_fields_id
 
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         a = 'str'
         b = b'bytes'
         c = 123
         d = True
-        self.runner.create_contract(nc_id, blueprint_id, ctx, a, b, c, d)
+        self.runner.create_contract(nc_id, self.simple_fields_id, ctx, a, b, c, d)
 
         storage = self.runner.get_storage(nc_id)
         self.assertEqual(storage.get_obj(b'a', STR_NC_TYPE), a)
@@ -143,16 +111,15 @@ class NCBlueprintTestCase(unittest.TestCase):
         self.assertEqual(storage.get_obj(b'd', BOOL_NC_TYPE), d)
 
     def test_container_fields(self) -> None:
-        blueprint_id = self.blueprint_ids['container_fields']
         nc_id = self.container_fields_id
 
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         items = [
             ('a', '1', b'1', 1),
             ('b', '2', b'2', 2),
             ('c', '3', b'3', 3),
         ]
-        self.runner.create_contract(nc_id, blueprint_id, ctx, items)
+        self.runner.create_contract(nc_id, self.container_fields_id, ctx, items)
 
         storage = self.runner.get_storage(nc_id)
         self.assertEqual(storage.get_obj(b'a:\x01a', STR_NC_TYPE), '1')
@@ -160,10 +127,9 @@ class NCBlueprintTestCase(unittest.TestCase):
         self.assertEqual(storage.get_obj(b'a:\x01c', STR_NC_TYPE), '3')
 
     def _create_my_blueprint_contract(self) -> None:
-        blueprint_id = self.blueprint_ids['my_blueprint']
         nc_id = self.my_blueprint_id
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
-        self.runner.create_contract(nc_id, blueprint_id, ctx)
+        ctx = self.create_context()
+        self.runner.create_contract(nc_id, self.my_blueprint_id, ctx)
 
     def test_public_method_fails(self) -> None:
         self._create_my_blueprint_contract()
@@ -171,7 +137,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         storage = self.runner.get_storage(nc_id)
 
         with self.assertRaises(NCFail):
-            ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+            ctx = self.create_context()
             self.runner.call_public_method(nc_id, 'fail', ctx)
         self.assertEqual(1, storage.get_obj(b'a', INT_NC_TYPE))
 
@@ -195,14 +161,14 @@ class NCBlueprintTestCase(unittest.TestCase):
     def test_nop(self) -> None:
         self._create_my_blueprint_contract()
         nc_id = self.my_blueprint_id
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         self.runner.call_public_method(nc_id, 'nop', ctx)
 
     def test_withdrawal_fail(self) -> None:
         self._create_my_blueprint_contract()
         nc_id = self.my_blueprint_id
         token_uid = TokenUid(b'\0')
-        ctx = Context(
+        ctx = self.create_context(
             [NCWithdrawalAction(token_uid=token_uid, amount=1)],
             self.tx,
             MOCK_ADDRESS,
@@ -216,7 +182,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         nc_id = self.my_blueprint_id
         storage = self.runner.get_storage(nc_id)
         token_uid = TokenUid(b'\0')
-        ctx = Context(
+        ctx = self.create_context(
             [NCDepositAction(token_uid=token_uid, amount=100)],
             self.tx,
             MOCK_ADDRESS,
@@ -225,7 +191,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         self.runner.call_public_method(nc_id, 'nop', ctx)
         self.assertEqual(Balance(value=100, can_mint=False, can_melt=False), storage.get_balance(token_uid))
 
-        ctx = Context(
+        ctx = self.create_context(
             [NCWithdrawalAction(token_uid=token_uid, amount=1)],
             self.tx,
             MOCK_ADDRESS,
@@ -234,7 +200,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         self.runner.call_public_method(nc_id, 'nop', ctx)
         self.assertEqual(Balance(value=99, can_mint=False, can_melt=False), storage.get_balance(token_uid))
 
-        ctx = Context(
+        ctx = self.create_context(
             [NCWithdrawalAction(token_uid=token_uid, amount=50)],
             self.tx,
             MOCK_ADDRESS,
@@ -243,7 +209,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         self.runner.call_public_method(nc_id, 'nop', ctx)
         self.assertEqual(Balance(value=49, can_mint=False, can_melt=False), storage.get_balance(token_uid))
 
-        ctx = Context(
+        ctx = self.create_context(
             [NCWithdrawalAction(token_uid=token_uid, amount=50)],
             self.tx,
             MOCK_ADDRESS,
@@ -260,7 +226,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         token_uid = TokenUid(b'\0')
         wrong_token_uid = TokenUid(b'\1')
 
-        ctx = Context(
+        ctx = self.create_context(
             [NCDepositAction(token_uid=token_uid, amount=100)],
             self.tx,
             MOCK_ADDRESS,
@@ -269,7 +235,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         self.runner.call_public_method(nc_id, 'nop', ctx)
         self.assertEqual(Balance(value=100, can_mint=False, can_melt=False), storage.get_balance(token_uid))
 
-        ctx = Context(
+        ctx = self.create_context(
             [NCWithdrawalAction(token_uid=wrong_token_uid, amount=1)],
             self.tx,
             MOCK_ADDRESS,
@@ -294,7 +260,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         storage = self.runner.get_storage(nc_id)
 
         token_uid = TokenUid(b'\0')  # HTR
-        ctx = Context(
+        ctx = self.create_context(
             [NCDepositAction(token_uid=token_uid, amount=100)],
             self.tx,
             MOCK_ADDRESS,
@@ -304,7 +270,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         self.assertEqual(Balance(value=100, can_mint=False, can_melt=False), storage.get_balance(token_uid))
 
         token_uid2 = TokenUid(b'\0' + b'\1' * 31)
-        ctx = Context(
+        ctx = self.create_context(
             [NCDepositAction(token_uid=token_uid2, amount=200)],
             self.tx,
             MOCK_ADDRESS,

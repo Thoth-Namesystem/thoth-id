@@ -1,10 +1,21 @@
 from typing import Optional
 
-from hathor.nanocontracts import Blueprint
-from hathor.nanocontracts.context import Context
-from hathor.nanocontracts.types import Address, Amount, SignedData, Timestamp, TokenUid, TxOutputScript, public, view
+from hathor import (
+    Address,
+    Amount,
+    Blueprint,
+    Context,
+    SignedData,
+    Timestamp,
+    TokenUid,
+    TxOutputScript,
+    export,
+    public,
+    view,
+)
 
 
+@export
 class MyBlueprint(Blueprint):
     a_int: int
     a_str: str
@@ -21,7 +32,7 @@ class MyBlueprint(Blueprint):
     a_optional_int: Optional[int]
 
     @public
-    def initialize(self, ctx: Context) -> None:
+    def initialize(self, ctx: Context, arg1: int) -> None:
         pass
 
     @public

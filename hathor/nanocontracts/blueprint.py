@@ -38,7 +38,14 @@ class _BlueprintBase(type):
     This metaclass will modify the attributes and set Fields to them according to their types.
     """
 
-    def __new__(cls, name, bases, attrs, **kwargs):
+    def __new__(
+        cls: type[_BlueprintBase],
+        name: str,
+        bases: tuple[type, ...],
+        attrs: dict[str, Any],
+        /,
+        **kwargs: Any
+    ) -> _BlueprintBase:
         from hathor.nanocontracts.fields import make_field_for_type
 
         # Initialize only subclasses of Blueprint.

@@ -22,7 +22,10 @@ from typing import TYPE_CHECKING, Any, Iterable, Optional, cast
 from structlog import get_logger
 from typing_extensions import assert_never
 
+from hathor.consensus.context import ReorgInfo
+from hathor.feature_activation.feature import Feature
 from hathor.transaction import BaseTransaction, Block, Transaction
+from hathor.transaction.exceptions import TokenNotFound
 from hathor.transaction.nc_execution_state import NCExecutionState
 from hathor.transaction.types import MetaNCCallRecord
 from hathor.util import classproperty
@@ -31,9 +34,11 @@ from hathor.utils.weight import weight_to_work
 if TYPE_CHECKING:
     from hathor.conf.settings import HathorSettings
     from hathor.consensus.context import ConsensusAlgorithmContext
+    from hathor.feature_activation.feature_service import FeatureService
     from hathor.nanocontracts.nc_exec_logs import NCLogStorage
     from hathor.nanocontracts.runner import Runner
     from hathor.nanocontracts.runner.runner import RunnerFactory
+    from hathor.nanocontracts.storage import NCBlockStorage
 
 logger = get_logger()
 
@@ -49,11 +54,16 @@ class BlockConsensusAlgorithm:
         context: 'ConsensusAlgorithmContext',
         runner_factory: RunnerFactory,
         nc_log_storage: NCLogStorage,
+        feature_service: FeatureService,
+        *,
+        nc_exec_fail_trace: bool = False,
     ) -> None:
         self._settings = settings
         self.context = context
         self._runner_factory = runner_factory
         self._nc_log_storage = nc_log_storage
+        self.feature_service = feature_service
+        self.nc_exec_fail_trace = nc_exec_fail_trace
 
     @classproperty
     def log(cls) -> Any:
@@ -67,12 +77,14 @@ class BlockConsensusAlgorithm:
         assert self.context.nc_events is None
         self.context.nc_events = []
         self.update_voided_info(block)
-        if self._settings.ENABLE_NANO_CONTRACTS:
-            self.execute_nano_contracts(block)
 
-    def _nc_initialize_genesis(self, block: Block) -> None:
-        """Initialize the genesis block with an empty contract trie."""
-        assert block.is_genesis
+        if self._should_execute_nano(block):
+            self.execute_nano_contracts(block)
+        else:
+            self._nc_initialize_empty(block)
+
+    def _nc_initialize_empty(self, block: Block) -> None:
+        """Initialize a block with an empty contract trie."""
         meta = block.get_metadata()
         block_storage = self.context.consensus.nc_storage_factory.get_empty_block_storage()
         block_storage.commit()
@@ -86,13 +98,9 @@ class BlockConsensusAlgorithm:
         """Execute the method calls for transactions confirmed by this block handling reorgs."""
         # If we reach this point, Nano Contracts must be enabled.
         assert self._settings.ENABLE_NANO_CONTRACTS
+        assert not block.is_genesis
 
         meta = block.get_metadata()
-
-        if block.is_genesis:
-            self._nc_initialize_genesis(block)
-            return
-
         if meta.voided_by:
             # If the block is voided, skip execution.
             return
@@ -101,14 +109,14 @@ class BlockConsensusAlgorithm:
 
         to_be_executed: list[Block] = []
         is_reorg: bool = False
-        if self.context.reorg_common_block:
+        if self.context.reorg_info:
             # handle reorgs
             is_reorg = True
             cur = block
             # XXX We could stop when `cur_meta.nc_block_root_id is not None` but
             #     first we need to refactor meta.first_block and meta.voided_by to
             #     have different values per block.
-            while cur != self.context.reorg_common_block:
+            while cur != self.context.reorg_info.common_block:
                 cur_meta = cur.get_metadata()
                 if cur_meta.nc_block_root_id is not None:
                     # Reset nc_block_root_id to force re-execution.
@@ -116,11 +124,47 @@ class BlockConsensusAlgorithm:
                 to_be_executed.append(cur)
                 cur = cur.get_block_parent()
         else:
-            # no reorg occurred, so simply execute this new block.
-            to_be_executed = [block]
+            # No reorg occurred, so we execute all unexecuted blocks.
+            # Normally it's just the current block, but it's possible to have
+            # voided and therefore unexecuted blocks connected to the best chain,
+            # for example when a block is voided by a transaction.
+            cur = block
+            while True:
+                cur_meta = cur.get_metadata()
+                if cur_meta.nc_block_root_id is not None:
+                    break
+                to_be_executed.append(cur)
+                if cur.is_genesis:
+                    break
+                cur = cur.get_block_parent()
 
         for current in to_be_executed[::-1]:
             self._nc_execute_calls(current, is_reorg=is_reorg)
+
+    def _should_execute_nano(self, block: Block) -> bool:
+        """
+        Determine whether we should proceed to execute Nano transactions while making the necessary initializations.
+        """
+        from hathor.conf.settings import NanoContractsSetting
+        assert not block.is_genesis
+
+        match self._settings.ENABLE_NANO_CONTRACTS:
+            case NanoContractsSetting.ENABLED:
+                return True
+
+            case NanoContractsSetting.FEATURE_ACTIVATION:
+                parent = block.get_block_parent()
+                is_active_on_parent = self.feature_service.is_feature_active(
+                    vertex=parent,
+                    feature=Feature.NANO_CONTRACTS,
+                )
+                return is_active_on_parent
+
+            case NanoContractsSetting.DISABLED:
+                return False
+
+            case _:  # pragma: no cover
+                assert_never(self._settings.ENABLE_NANO_CONTRACTS)
 
     def _nc_execute_calls(self, block: Block, *, is_reorg: bool) -> None:
         """Internal method to execute the method calls for transactions confirmed by this block.
@@ -130,15 +174,17 @@ class BlockConsensusAlgorithm:
 
         assert self._settings.ENABLE_NANO_CONTRACTS
 
+        if block.is_genesis:
+            # XXX We can remove this call after the full node initialization is refactored and
+            #     the genesis block goes through the consensus protocol.
+            self._nc_initialize_empty(block)
+            return
+
         meta = block.get_metadata()
         assert not meta.voided_by
         assert meta.nc_block_root_id is None
 
         parent = block.get_block_parent()
-        if parent.is_genesis:
-            # XXX We can remove this call after the full node initialization is refactored and
-            #     the genesis block goes through the consensus protocol.
-            self._nc_initialize_genesis(parent)
         parent_meta = parent.get_metadata()
         block_root_id = parent_meta.nc_block_root_id
         assert block_root_id is not None
@@ -150,7 +196,7 @@ class BlockConsensusAlgorithm:
                 continue
             tx_meta = tx.get_metadata()
             if is_reorg:
-                assert self.context.reorg_common_block is not None
+                assert self.context.reorg_info is not None
                 # Clear the NC_EXECUTION_FAIL_ID flag if this is the only reason the transaction was voided.
                 # This case might only happen when handling reorgs.
                 assert tx.storage is not None
@@ -195,12 +241,23 @@ class BlockConsensusAlgorithm:
 
             runner = self._runner_factory.create(block_storage=block_storage, seed=seed_hasher.digest())
             exception_and_tb: tuple[NCFail, str] | None = None
+            token_dict = tx.get_complete_token_info(block_storage)
+            should_verify_sum_after_execution = any(token_info.version is None for token_info in token_dict.values())
+
             try:
                 runner.execute_from_tx(tx)
+
+                # after the execution we have the latest state in the storage
+                # and at this point no tokens pending creation
+                if should_verify_sum_after_execution:
+                    self._verify_sum_after_execution(tx, block_storage)
+
             except NCFail as e:
                 kwargs: dict[str, Any] = {}
                 if tx.name:
                     kwargs['__name'] = tx.name
+                if self.nc_exec_fail_trace:
+                    kwargs['exc_info'] = True
                 self.log.info(
                     'nc execution failed',
                     tx=tx.hash.hex(),
@@ -248,8 +305,8 @@ class BlockConsensusAlgorithm:
                           tx=tx.hash.hex(),
                           execution=tx_meta.nc_execution.value)
             match tx_meta.nc_execution:
-                case NCExecutionState.PENDING:
-                    assert False  # should never happen
+                case NCExecutionState.PENDING:  # pragma: no cover
+                    assert False, 'unexpected pending state'  # should never happen
                 case NCExecutionState.SUCCESS:
                     assert tx_meta.voided_by is None
                 case NCExecutionState.FAILURE:
@@ -257,14 +314,27 @@ class BlockConsensusAlgorithm:
                 case NCExecutionState.SKIPPED:
                     assert tx_meta.voided_by
                     assert NC_EXECUTION_FAIL_ID not in tx_meta.voided_by
-                case _:
+                case _:  # pragma: no cover
                     assert_never(tx_meta.nc_execution)
 
+    def _verify_sum_after_execution(self, tx: Transaction, block_storage: NCBlockStorage) -> None:
+        from hathor import NCFail
+        from hathor.verification.transaction_verifier import TransactionVerifier
+        try:
+            token_dict = tx.get_complete_token_info(block_storage)
+            TransactionVerifier.verify_sum(self._settings, token_dict)
+        except TokenNotFound as e:
+            # At this point, any nonexistent token would have made a prior validation fail. For example, if there
+            # was a withdrawal of a nonexistent token, it would have failed in the balance validation before.
+            raise AssertionError from e
+        except Exception as e:
+            raise NCFail from e
+
     def nc_update_metadata(self, tx: Transaction, runner: 'Runner') -> None:
-        from hathor.nanocontracts.runner.types import CallType
+        from hathor.nanocontracts.runner.call_info import CallType
 
         meta = tx.get_metadata()
-        assert meta.nc_execution is NCExecutionState.SUCCESS
+        assert meta.nc_execution == NCExecutionState.SUCCESS
         call_info = runner.get_last_call_info()
         assert call_info.calls is not None
         nc_calls = [
@@ -423,8 +493,7 @@ class BlockConsensusAlgorithm:
                 self.update_voided_by_from_parents(block)
 
             else:
-                # Either eveyone has the same score or there is a winner.
-
+                # Either everyone has the same score or there is a winner.
                 valid_heads = []
                 for head in heads:
                     meta = head.get_metadata()
@@ -447,19 +516,42 @@ class BlockConsensusAlgorithm:
                     meta = block.get_metadata()
                     height = block.get_height()
                     if not meta.voided_by:
+                        # It is only a re-org if common_block not in heads
+                        # This must run before updating the indexes.
+                        if common_block not in heads:
+                            self.mark_as_reorg_if_needed(common_block, block)
                         self.log.debug('index new winner block', height=height, block=block.hash_hex)
                         # We update the height cache index with the new winner chain
                         storage.indexes.height.update_new_chain(height, block)
                         storage.update_best_block_tips_cache([block.hash])
-                        # It is only a re-org if common_block not in heads
-                        if common_block not in heads:
-                            self.context.mark_as_reorg(common_block)
                 else:
+                    # This must run before updating the indexes.
+                    meta = block.get_metadata()
+                    if not meta.voided_by:
+                        self.mark_as_reorg_if_needed(common_block, block)
                     best_block_tips = [blk.hash for blk in heads]
                     best_block_tips.append(block.hash)
                     storage.update_best_block_tips_cache(best_block_tips)
-                    if not meta.voided_by:
-                        self.context.mark_as_reorg(common_block)
+
+    def mark_as_reorg_if_needed(self, common_block: Block, new_best_block: Block) -> None:
+        """Mark as reorg only if reorg size > 0."""
+        assert new_best_block.storage is not None
+        storage = new_best_block.storage
+        assert storage.indexes is not None
+        _, old_best_block_hash = storage.indexes.height.get_height_tip()
+        old_best_block = storage.get_transaction(old_best_block_hash)
+        assert isinstance(old_best_block, Block)
+
+        reorg_size = old_best_block.get_height() - common_block.get_height()
+        if reorg_size == 0:
+            assert old_best_block.hash == common_block.hash
+            return
+
+        self.context.mark_as_reorg(ReorgInfo(
+            common_block=common_block,
+            old_best_block=old_best_block,
+            new_best_block=new_best_block,
+        ))
 
     def union_voided_by_from_parents(self, block: Block) -> set[bytes]:
         """Return the union of the voided_by of block's parents.
@@ -687,7 +779,7 @@ class BlockConsensusAlgorithm:
                 continue
 
             if tx.is_nano_contract():
-                if meta.nc_execution is NCExecutionState.SUCCESS:
+                if meta.nc_execution == NCExecutionState.SUCCESS:
                     assert tx.storage is not None
                     assert tx.storage.indexes is not None
                     tx.storage.indexes.handle_contract_unexecution(tx)
@@ -782,17 +874,28 @@ class BlockConsensusAlgorithm:
 
 
 class BlockConsensusAlgorithmFactory:
-    __slots__ = ('settings', 'nc_log_storage', '_runner_factory')
+    __slots__ = ('settings', 'nc_log_storage', '_runner_factory', 'feature_service', 'nc_exec_fail_trace')
 
     def __init__(
         self,
         settings: HathorSettings,
         runner_factory: RunnerFactory,
         nc_log_storage: NCLogStorage,
+        feature_service: FeatureService,
+        *,
+        nc_exec_fail_trace: bool = False,
     ) -> None:
         self.settings = settings
         self._runner_factory = runner_factory
         self.nc_log_storage = nc_log_storage
+        self.feature_service = feature_service
+        self.nc_exec_fail_trace = nc_exec_fail_trace
 
     def __call__(self, context: 'ConsensusAlgorithmContext') -> BlockConsensusAlgorithm:
-        return BlockConsensusAlgorithm(self.settings, context, self._runner_factory, self.nc_log_storage)
+        return BlockConsensusAlgorithm(
+            self.settings,
+            context,
+            self._runner_factory,
+            self.nc_log_storage,
+            self.feature_service,
+        )

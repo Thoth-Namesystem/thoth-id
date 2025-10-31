@@ -12,13 +12,12 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from hathor.conf.settings import HATHOR_TOKEN_UID
-from hathor.nanocontracts import Blueprint, Context, public
+from hathor.nanocontracts import HATHOR_TOKEN_UID, Blueprint, Context, public
 from hathor.nanocontracts.types import ContractId, VertexId
 from hathor.nanocontracts.utils import derive_child_token_id
 from hathor.transaction import Transaction
 from hathor.transaction.nc_execution_state import NCExecutionState
-from hathor.transaction.util import get_deposit_amount
+from hathor.transaction.util import get_deposit_token_deposit_amount
 from tests.dag_builder.builder import TestDAGBuilder
 from tests.nanocontracts.blueprints.unittest import BlueprintTestCase
 
@@ -26,7 +25,7 @@ from tests.nanocontracts.blueprints.unittest import BlueprintTestCase
 class MyBlueprint(Blueprint):
     @public(allow_deposit=True)
     def initialize(self, ctx: Context, amount: int) -> None:
-        self.syscall.create_token(token_name='token a', token_symbol='TKA', amount=amount)
+        self.syscall.create_deposit_token(token_name='token a', token_symbol='TKA', amount=amount)
 
 
 class TestIndexes2(BlueprintTestCase):
@@ -62,10 +61,10 @@ class TestIndexes2(BlueprintTestCase):
         tka_token_info = self.tokens_index.get_token_info(tka)
         htr_token_info = self.tokens_index.get_token_info(HATHOR_TOKEN_UID)
 
-        assert tx1.get_metadata().nc_execution is NCExecutionState.SUCCESS
+        assert tx1.get_metadata().nc_execution == NCExecutionState.SUCCESS
         assert tka_token_info.get_total() == amount
         assert htr_token_info.get_total() == (
             self._settings.GENESIS_TOKENS
             + 11 * self._settings.INITIAL_TOKENS_PER_BLOCK
-            - get_deposit_amount(self._settings, amount)
+            - get_deposit_token_deposit_amount(self._settings, amount)
         )

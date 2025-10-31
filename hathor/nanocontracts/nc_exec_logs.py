@@ -36,7 +36,7 @@ from hathor.utils.pydantic import BaseModel
 if TYPE_CHECKING:
     from hathor.conf.settings import HathorSettings
 
-MAX_EVENT_SIZE: int = 100 * 1024  # 100KiB
+MAX_EVENT_SIZE: int = 1024  # 1KiB
 
 
 @unique
@@ -234,7 +234,7 @@ class NCLogger:
     def __emit_event__(self, data: bytes) -> None:
         """Emit a custom event from a Nano Contract."""
         if len(data) > MAX_EVENT_SIZE:
-            raise ValueError(f'event data cannot be larger than {MAX_EVENT_SIZE} bytes, is {len(data)}')
+            raise NCFail(f'event data cannot be larger than {MAX_EVENT_SIZE} bytes, is {len(data)}')
         self.__events__.append(NCEvent(nc_id=self.__nc_id__, data=data))
 
     def __log__(self, level: NCLogLevel, message: str, **kwargs: Any) -> None:

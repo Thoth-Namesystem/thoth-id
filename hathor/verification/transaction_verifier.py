@@ -17,7 +17,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, assert_never
 
 from hathor.daa import DifficultyAdjustmentAlgorithm
-from hathor.feature_activation.feature import Feature
 from hathor.feature_activation.feature_service import FeatureService
 from hathor.profiler import get_cpu_profiler
 from hathor.reward_lock import get_spent_reward_locked_info
@@ -25,10 +24,14 @@ from hathor.reward_lock.reward_lock import get_minimum_best_height
 from hathor.transaction import BaseTransaction, Transaction, TxInput, TxVersion
 from hathor.transaction.exceptions import (
     ConflictingInputs,
+    ConflictWithConfirmedTxError,
     DuplicatedParents,
+    ForbiddenMelt,
+    ForbiddenMint,
     IncorrectParents,
     InexistentInput,
     InputOutputMismatch,
+    InputVoidedAndConfirmed,
     InvalidInputData,
     InvalidInputDataSize,
     InvalidToken,
@@ -36,19 +39,29 @@ from hathor.transaction.exceptions import (
     RewardLocked,
     ScriptError,
     TimestampError,
+    TokenNotFound,
     TooFewInputs,
+    TooManyBetweenConflicts,
     TooManyInputs,
     TooManySigOps,
+    TooManyTokens,
+    TooManyWithinConflicts,
+    UnusedTokensError,
     WeightError,
 )
-from hathor.transaction.transaction import TokenInfo
-from hathor.transaction.util import get_deposit_amount, get_withdraw_amount
+from hathor.transaction.token_info import TokenInfo, TokenInfoDict, TokenVersion
+from hathor.transaction.util import get_deposit_token_deposit_amount, get_deposit_token_withdraw_amount
 from hathor.types import TokenUid, VertexId
+from hathor.verification.verification_params import VerificationParams
 
 if TYPE_CHECKING:
     from hathor.conf.settings import HathorSettings
 
 cpu = get_cpu_profiler()
+
+MAX_TOKENS_LENGTH: int = 16
+MAX_WITHIN_CONFLICTS: int = 8
+MAX_BETWEEN_CONFLICTS: int = 8
 
 
 class TransactionVerifier:
@@ -117,8 +130,6 @@ class TransactionVerifier:
 
     def verify_inputs(self, tx: Transaction, *, skip_script: bool = False) -> None:
         """Verify inputs signatures and ownership and all inputs actually exist"""
-        from hathor.transaction.storage.exceptions import TransactionDoesNotExist
-
         spent_outputs: set[tuple[VertexId, int]] = set()
         for input_tx in tx.inputs:
             if len(input_tx.data) > self._settings.MAX_INPUT_DATA_SIZE:
@@ -126,13 +137,8 @@ class TransactionVerifier:
                     len(input_tx.data), self._settings.MAX_INPUT_DATA_SIZE
                 ))
 
-            try:
-                spent_tx = tx.get_spent_tx(input_tx)
-                if input_tx.index >= len(spent_tx.outputs):
-                    raise InexistentInput('Output spent by this input does not exist: {} index {}'.format(
-                        input_tx.tx_id.hex(), input_tx.index))
-            except TransactionDoesNotExist:
-                raise InexistentInput('Input tx does not exist: {}'.format(input_tx.tx_id.hex()))
+            spent_tx = tx.get_spent_tx(input_tx)
+            assert input_tx.index < len(spent_tx.outputs)
 
             if tx.timestamp <= spent_tx.timestamp:
                 raise TimestampError('tx={} timestamp={}, spent_tx={} timestamp={}'.format(
@@ -230,9 +236,18 @@ class TransactionVerifier:
             if output.get_token_index() > len(tx.tokens):
                 raise InvalidToken('token uid index not available: index {}'.format(output.get_token_index()))
 
-    def verify_sum(self, token_dict: dict[TokenUid, TokenInfo]) -> None:
+    @classmethod
+    def verify_sum(
+        cls,
+        settings: HathorSettings,
+        token_dict: TokenInfoDict,
+        allow_nonexistent_tokens: bool = False,
+    ) -> None:
         """Verify that the sum of outputs is equal of the sum of inputs, for each token. If sum of inputs
         and outputs is not 0, make sure inputs have mint/melt authority.
+
+        When `allow_nonexistent_tokens` flag is set to `True` and a nonexistent token is provided,
+        this method will skip the fee and HTR balance checks.
 
         token_dict sums up all tokens present in the tx and their properties (amount, can_mint, can_melt)
         amount = outputs - inputs, thus:
@@ -241,55 +256,147 @@ class TransactionVerifier:
 
         :raises InputOutputMismatch: if sum of inputs is not equal to outputs and there's no mint/melt
         """
-        withdraw = 0
         deposit = 0
-        for token_uid, token_info in token_dict.items():
-            if token_uid == self._settings.HATHOR_TOKEN_UID:
-                continue
+        withdraw = 0
+        has_nonexistent_tokens = False
 
-            if token_info.amount == 0:
-                # that's the usual behavior, nothing to do
-                pass
-            elif token_info.amount < 0:
-                # tokens have been melted
-                if not token_info.can_melt:
-                    raise InputOutputMismatch('{} {} tokens melted, but there is no melt authority input'.format(
-                        token_info.amount, token_uid.hex()))
-                withdraw += get_withdraw_amount(self._settings, token_info.amount)
-            else:
-                # tokens have been minted
-                if not token_info.can_mint:
-                    raise InputOutputMismatch('{} {} tokens minted, but there is no mint authority input'.format(
-                        (-1) * token_info.amount, token_uid.hex()))
-                deposit += get_deposit_amount(self._settings, token_info.amount)
+        for token_uid, token_info in token_dict.items():
+            cls._check_token_permissions(token_uid, token_info)
+            match token_info.version:
+                case None:
+                    # when a token is not found, we can't assert the HTR value, since we don't know its version
+                    if not allow_nonexistent_tokens:
+                        raise TokenNotFound(f'token uid {token_uid.hex()} not found.')
+                    has_nonexistent_tokens = True
+
+                case TokenVersion.NATIVE:
+                    continue
+
+                case TokenVersion.DEPOSIT:
+                    if token_info.has_been_melted():
+                        withdraw += get_deposit_token_withdraw_amount(settings, token_info.amount)
+                    if token_info.has_been_minted():
+                        deposit += get_deposit_token_deposit_amount(settings, token_info.amount)
+
+                case TokenVersion.FEE:
+                    continue
+
+                case _:
+                    assert_never(token_info.version)
 
         # check whether the deposit/withdraw amount is correct
         htr_expected_amount = withdraw - deposit
-        htr_info = token_dict[self._settings.HATHOR_TOKEN_UID]
-        if htr_info.amount != htr_expected_amount:
+        htr_info = token_dict[settings.HATHOR_TOKEN_UID]
+        if htr_info.amount < htr_expected_amount:
             raise InputOutputMismatch('HTR balance is different than expected. (amount={}, expected={})'.format(
                 htr_info.amount,
                 htr_expected_amount,
             ))
 
-    def verify_version(self, tx: Transaction) -> None:
+        # in a partial validation, it's not possible to check fees and
+        # htr amount since it depends on verification with all token versions
+        if has_nonexistent_tokens:
+            return
+
+        expected_fee = token_dict.calculate_fee(settings)
+        if expected_fee != token_dict.fees_from_fee_header:
+            raise InputOutputMismatch(f"Fee amount is different than expected. "
+                                      f"(amount={token_dict.fees_from_fee_header}, expected={expected_fee})")
+
+        if htr_info.amount > htr_expected_amount:
+            raise InputOutputMismatch('HTR balance is different than expected. (amount={}, expected={})'.format(
+                htr_info.amount,
+                htr_expected_amount,
+            ))
+
+        assert htr_info.amount == htr_expected_amount
+
+    @staticmethod
+    def _check_token_permissions(token_uid: TokenUid, token_info: TokenInfo) -> None:
+        """Verify whether token can be minted/melted based on its authority."""
+        from hathor.conf.settings import HATHOR_TOKEN_UID
+        if token_info.version == TokenVersion.NATIVE:
+            assert token_uid == HATHOR_TOKEN_UID
+            assert not token_info.can_mint
+            assert not token_info.can_melt
+            return
+        assert token_uid != HATHOR_TOKEN_UID
+        if token_info.has_been_melted() and not token_info.can_melt:
+            raise ForbiddenMelt.from_token(token_info.amount, token_uid)
+        if token_info.has_been_minted() and not token_info.can_mint:
+            raise ForbiddenMint(token_info.amount, token_uid)
+
+    def verify_version(self, tx: Transaction, params: VerificationParams) -> None:
         """Verify that the vertex version is valid."""
-        from hathor.conf.settings import NanoContractsSetting
         allowed_tx_versions = {
             TxVersion.REGULAR_TRANSACTION,
             TxVersion.TOKEN_CREATION_TRANSACTION,
         }
 
-        match self._settings.ENABLE_NANO_CONTRACTS:
-            case NanoContractsSetting.DISABLED:
-                pass
-            case NanoContractsSetting.ENABLED:
-                allowed_tx_versions.add(TxVersion.ON_CHAIN_BLUEPRINT)
-            case NanoContractsSetting.FEATURE_ACTIVATION:
-                if self._feature_service.is_feature_active(vertex=tx, feature=Feature.NANO_CONTRACTS):
-                    allowed_tx_versions.add(TxVersion.ON_CHAIN_BLUEPRINT)
-            case _ as unreachable:
-                assert_never(unreachable)
+        if params.enable_nano:
+            allowed_tx_versions.add(TxVersion.ON_CHAIN_BLUEPRINT)
 
         if tx.version not in allowed_tx_versions:
             raise InvalidVersionError(f'invalid vertex version: {tx.version}')
+
+    def verify_tokens(self, tx: Transaction, params: VerificationParams) -> None:
+        """Verify that all tokens are used and unique."""
+        if not params.harden_token_restrictions:
+            return
+
+        if len(tx.tokens) > MAX_TOKENS_LENGTH:
+            raise TooManyTokens('too many tokens')
+
+        if len(tx.tokens) != len(set(tx.tokens)):
+            raise InvalidToken('repeated tokens are not allowed')
+
+        seen_token_indexes = set()
+        for txout in tx.outputs:
+            seen_token_indexes.add(txout.get_token_index())
+
+        if tx.is_nano_contract():
+            nano_header = tx.get_nano_header()
+            for action in nano_header.nc_actions:
+                seen_token_indexes.add(action.token_index)
+
+        seen_token_indexes.discard(0)
+        if sorted(seen_token_indexes) != list(range(1, len(tx.tokens) + 1)):
+            raise UnusedTokensError('unused tokens are not allowed')
+
+    def verify_conflict(self, tx: Transaction, params: VerificationParams) -> None:
+        """Verify that this transaction has no conflicts with confirmed transactions."""
+        assert tx.storage is not None
+
+        if not params.reject_conflicts_with_confirmed_txs:
+            return
+
+        between_counter = 0
+        for txin in tx.inputs:
+            spent_tx = tx.get_spent_tx(txin)
+            spent_tx_meta = spent_tx.get_metadata()
+            if spent_tx_meta.first_block is not None and spent_tx_meta.voided_by:
+                # spent_tx has been confirmed by a block and is voided, so its
+                # outputs cannot be spent.
+                raise InputVoidedAndConfirmed(spent_tx.hash.hex())
+            if txin.index not in spent_tx_meta.spent_outputs:
+                continue
+            spent_by_list = spent_tx_meta.spent_outputs[txin.index]
+            within_counter = 0
+            for h in spent_by_list:
+                if h == tx.hash:
+                    # Skip tx itself.
+                    continue
+                conflict_tx = tx.storage.get_transaction(h)
+                if conflict_tx.get_metadata().first_block is not None:
+                    # only mempool conflicts are allowed
+                    raise ConflictWithConfirmedTxError('transaction has a conflict with a confirmed transaction')
+                if within_counter == 0:
+                    # Only increment once per input.
+                    between_counter += 1
+                within_counter += 1
+
+            if within_counter >= MAX_WITHIN_CONFLICTS:
+                raise TooManyWithinConflicts
+
+        if between_counter > MAX_BETWEEN_CONFLICTS:
+            raise TooManyBetweenConflicts

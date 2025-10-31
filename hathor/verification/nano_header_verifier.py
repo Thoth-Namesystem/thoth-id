@@ -18,13 +18,40 @@ from collections import defaultdict
 from typing import Sequence
 
 from hathor.conf.settings import HATHOR_TOKEN_UID, HathorSettings
-from hathor.nanocontracts.exception import NCInvalidAction, NCInvalidSignature
-from hathor.nanocontracts.types import BaseAuthorityAction, NCAction, NCActionType, TokenUid
+from hathor.nanocontracts.exception import (
+    NanoContractDoesNotExist,
+    NCFail,
+    NCForbiddenAction,
+    NCInvalidAction,
+    NCInvalidMethodCall,
+    NCInvalidSeqnum,
+    NCInvalidSignature,
+    NCMethodNotFound,
+    NCTxValidationError,
+)
+from hathor.nanocontracts.method import Method
+from hathor.nanocontracts.runner.runner import MAX_SEQNUM_JUMP_SIZE
+from hathor.nanocontracts.types import (
+    NC_ALLOWED_ACTIONS_ATTR,
+    NC_FALLBACK_METHOD,
+    Address,
+    BaseAuthorityAction,
+    BlueprintId,
+    ContractId,
+    NCAction,
+    NCActionType,
+    TokenUid,
+)
+from hathor.nanocontracts.utils import is_nc_public_method
 from hathor.transaction import BaseTransaction, Transaction
 from hathor.transaction.exceptions import ScriptError, TooManySigOps
 from hathor.transaction.headers.nano_header import ADDRESS_LEN_BYTES
 from hathor.transaction.scripts import SigopCounter, create_output_script
 from hathor.transaction.scripts.execute import ScriptExtras, raw_script_eval
+from hathor.transaction.storage import TransactionStorage
+from hathor.verification.verification_params import VerificationParams
+
+MAX_SEQNUM_DIFF_MEMPOOL = MAX_SEQNUM_JUMP_SIZE + 30
 
 MAX_NC_SCRIPT_SIZE: int = 1024
 MAX_NC_SCRIPT_SIGOPS_COUNT: int = 20
@@ -43,10 +70,11 @@ ALLOWED_ACTION_SETS: frozenset[frozenset[NCActionType]] = frozenset([
 
 
 class NanoHeaderVerifier:
-    __slots__ = ('_settings',)
+    __slots__ = ('_settings', '_tx_storage')
 
-    def __init__(self, *, settings: HathorSettings) -> None:
+    def __init__(self, *, settings: HathorSettings, tx_storage: TransactionStorage) -> None:
         self._settings = settings
+        self._tx_storage = tx_storage
 
     def verify_nc_signature(self, tx: BaseTransaction) -> None:
         """Verify if the caller's signature is valid."""
@@ -115,3 +143,73 @@ class NanoHeaderVerifier:
             action_types = {action.type for action in actions_per_token}
             if action_types not in ALLOWED_ACTION_SETS:
                 raise NCInvalidAction(f'conflicting actions for token {token_uid.hex()}')
+
+    def verify_method_call(self, tx: BaseTransaction, params: VerificationParams) -> None:
+        if not params.harden_nano_restrictions:
+            return
+
+        assert tx.is_nano_contract()
+        assert isinstance(tx, Transaction)
+
+        blueprint_id: BlueprintId
+        nano_header = tx.get_nano_header()
+        if nano_header.is_creating_a_new_contract():
+            # creating a new contract
+            blueprint_id = BlueprintId(nano_header.nc_id)
+            allow_fallback = False
+        else:
+            # contract already exists
+            best_block = self._tx_storage.get_best_block()
+            block_storage = self._tx_storage.get_nc_block_storage(best_block)
+            try:
+                contract_storage = block_storage.get_contract_storage(ContractId(nano_header.nc_id))
+            except NanoContractDoesNotExist as e:
+                raise NCTxValidationError from e
+            blueprint_id = contract_storage.get_blueprint_id()
+            allow_fallback = True
+
+        try:
+            blueprint_class = self._tx_storage.get_blueprint_class(blueprint_id)
+        except NCFail as e:
+            raise NCTxValidationError from e
+
+        method_name = nano_header.nc_method
+        method = getattr(blueprint_class, method_name, None)
+        allowed_actions: set[NCActionType]
+        if method is None:
+            if not allow_fallback:
+                raise NCMethodNotFound(f'method `{method_name}` not found and no fallback is allowed')
+            method = getattr(blueprint_class, NC_FALLBACK_METHOD, None)
+            if method is None:
+                raise NCMethodNotFound(f'method `{method_name}` not found and no fallback is provided')
+            method_name = 'fallback'
+        else:
+            if not is_nc_public_method(method):
+                raise NCInvalidMethodCall(f'method `{method_name}` is not a public method')
+            parser = Method.from_callable(method)
+            try:
+                parser.deserialize_args_bytes(nano_header.nc_args_bytes)
+            except NCFail as e:
+                raise NCTxValidationError from e
+
+        allowed_actions = getattr(method, NC_ALLOWED_ACTIONS_ATTR, set())
+        assert isinstance(allowed_actions, set)
+        for action in nano_header.nc_actions:
+            if action.type not in allowed_actions:
+                exception = NCForbiddenAction(f'action {action.type} is forbidden on method `{method_name}`')
+                raise NCTxValidationError from exception
+
+    def verify_seqnum(self, tx: BaseTransaction, params: VerificationParams) -> None:
+        if not params.harden_nano_restrictions:
+            return
+
+        assert tx.is_nano_contract()
+        assert isinstance(tx, Transaction)
+
+        nano_header = tx.get_nano_header()
+        best_block = self._tx_storage.get_best_block()
+        block_storage = self._tx_storage.get_nc_block_storage(best_block)
+        seqnum = block_storage.get_address_seqnum(Address(nano_header.nc_address))
+        diff = nano_header.nc_seqnum - seqnum
+        if diff < 0 or diff > MAX_SEQNUM_DIFF_MEMPOOL:
+            raise NCInvalidSeqnum(f'invalid seqnum (diff={diff})')

@@ -37,7 +37,7 @@ class MyBlueprint(Blueprint):
 
     @public
     def create_another(self, ctx: Context, blueprint_id: BlueprintId) -> ContractId:
-        contract_id, _ = self.syscall.create_contract(blueprint_id, b'1', [])
+        contract_id, _ = self.syscall.setup_new_contract(blueprint_id, salt=b'1').initialize()
         return contract_id
 
     @public
@@ -53,7 +53,7 @@ class TestCallerId(BlueprintTestCase):
 
     def test_callers(self) -> None:
         address = self.gen_random_address()
-        ctx = self.create_context(address=address)
+        ctx = self.create_context(caller_id=address)
         self.runner.create_contract(self.contract_id1, self.blueprint_id, ctx)
         contract1 = self.get_readonly_contract(self.contract_id1)
 

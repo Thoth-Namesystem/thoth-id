@@ -8,6 +8,7 @@ import time
 from contextlib import contextmanager
 from typing import Any, Callable, Collection, Iterable, Iterator, Optional
 from unittest import main as ut_main
+from unittest.mock import Mock
 
 from structlog import get_logger
 from twisted.trial import unittest
@@ -119,7 +120,6 @@ class TestCase(unittest.TestCase):
         self.rng = Random(self.seed)
         self._pending_cleanups: list[Callable[..., Any]] = []
         self._settings = get_global_settings()
-        self.verification_params = VerificationParams.default_for_mempool()
 
     def tearDown(self) -> None:
         self.clean_tmpdirs()
@@ -207,9 +207,10 @@ class TestCase(unittest.TestCase):
         disable_ipv4: bool = False,
         nc_indexes: bool = False,
         nc_log_config: NCLogConfig | None = None,
+        settings: HathorSettings | None = None,
     ):  # TODO: Add -> HathorManager here. It breaks the lint in a lot of places.
 
-        settings = self._settings._replace(NETWORK_NAME=network)
+        settings = (settings or self._settings)._replace(NETWORK_NAME=network)
         builder = self.get_builder() \
             .set_settings(settings)
 
@@ -520,3 +521,8 @@ class TestCase(unittest.TestCase):
             return None
 
         return list(hd.keys.keys())[index]
+
+    @staticmethod
+    def get_verification_params(manager: HathorManager | None = None) -> VerificationParams:
+        best_block = manager.tx_storage.get_best_block() if manager else None
+        return VerificationParams.default_for_mempool(best_block=best_block or Mock())

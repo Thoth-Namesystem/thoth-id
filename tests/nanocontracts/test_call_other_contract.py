@@ -13,13 +13,9 @@ from hathor.nanocontracts.exception import (
     NCViewMethodError,
 )
 from hathor.nanocontracts.nc_types import NCType, make_nc_type_for_arg_type as make_nc_type
-from hathor.nanocontracts.storage import NCBlockStorage, NCMemoryStorageFactory
-from hathor.nanocontracts.storage.backends import MemoryNodeTrieStore
 from hathor.nanocontracts.storage.contract_storage import Balance
-from hathor.nanocontracts.storage.patricia_trie import PatriciaTrie
 from hathor.nanocontracts.types import (
     Address,
-    BlueprintId,
     ContractId,
     NCAction,
     NCDepositAction,
@@ -27,8 +23,8 @@ from hathor.nanocontracts.types import (
     TokenUid,
     VertexId,
 )
-from tests import unittest
-from tests.nanocontracts.utils import TestRunner
+from hathor.transaction.token_info import TokenVersion
+from tests.nanocontracts.blueprints.unittest import BlueprintTestCase
 
 COUNTER_NC_TYPE = make_nc_type(int)
 CONTRACT_NC_TYPE: NCType[ContractId | None] = make_nc_type(ContractId | None)  # type: ignore[arg-type]
@@ -62,7 +58,7 @@ class MyBlueprint(Blueprint):
             assert isinstance(action, NCDepositAction)
             amount = 1 + action.amount // 2
             actions.append(NCDepositAction(token_uid=action.token_uid, amount=amount))
-        self.syscall.call_public_method(self.contract, 'split_balance', actions)
+        self.syscall.get_contract(self.contract, blueprint_id=None).public(*actions).split_balance()
 
     @public(allow_withdrawal=True)
     def get_tokens_from_another_contract(self, ctx: Context) -> None:
@@ -78,7 +74,9 @@ class MyBlueprint(Blueprint):
                 actions.append(NCWithdrawalAction(token_uid=action.token_uid, amount=-diff))
 
         if actions:
-            self.syscall.call_public_method(self.contract, 'get_tokens_from_another_contract', actions)
+            self.syscall.get_contract(self.contract, blueprint_id=None) \
+                .public(*actions) \
+                .get_tokens_from_another_contract()
 
     @public(allow_reentrancy=True)
     def dec(self, ctx: Context, fail_on_zero: bool) -> None:
@@ -89,29 +87,27 @@ class MyBlueprint(Blueprint):
                 return
         self.counter -= 1
         if self.contract:
-            actions: list[NCAction] = []
-            self.syscall.call_public_method(self.contract, 'dec', actions, fail_on_zero=fail_on_zero)
+            self.syscall.get_contract(self.contract, blueprint_id=None).public().dec(fail_on_zero=fail_on_zero)
 
     @public
     def non_stop_call(self, ctx: Context) -> None:
         assert self.contract is not None
         while True:
-            actions: list[NCAction] = []
-            self.syscall.call_public_method(self.contract, 'dec', actions, fail_on_zero=False)
+            self.syscall.get_contract(self.contract, blueprint_id=None).public().dec(fail_on_zero=False)
 
     @view
     def get_total_counter(self) -> int:
         mine = self.counter
         other = 0
         if self.contract:
-            other = self.syscall.call_view_method(self.contract, 'get_counter')
+            other = self.syscall.get_contract(self.contract, blueprint_id=None).view().get_counter()
         return mine + other
 
     @public
     def dec_and_get_counter(self, ctx: Context) -> int:
         assert self.contract is not None
         self.dec(ctx, fail_on_zero=True)
-        other = self.syscall.call_view_method(self.contract, 'get_counter')
+        other = self.syscall.get_contract(self.contract, blueprint_id=None).view().get_counter()
         return self.counter + other
 
     @view
@@ -121,45 +117,32 @@ class MyBlueprint(Blueprint):
     @public
     def invalid_call_initialize(self, ctx: Context) -> None:
         assert self.contract is not None
-        self.syscall.call_public_method(self.contract, 'initialize', [])
+        self.syscall.get_contract(self.contract, blueprint_id=None).public().initialize()
 
     @view
     def invalid_call_public_from_view(self) -> None:
         assert self.contract is not None
-        self.syscall.call_public_method(self.contract, 'dec', [])
+        self.syscall.get_contract(self.contract, blueprint_id=None).public().dec()
 
     @view
     def invalid_call_view_itself(self) -> int:
-        return self.syscall.call_view_method(self.syscall.get_contract_id(), 'get_counter')
+        return self.syscall.get_contract(self.syscall.get_contract_id(), blueprint_id=None).view().get_counter()
 
 
-class NCBlueprintTestCase(unittest.TestCase):
+class NCBlueprintTestCase(BlueprintTestCase):
     def setUp(self) -> None:
         super().setUp()
 
-        self.manager = self.create_peer('unittests')
         self.genesis = self.manager.tx_storage.get_all_genesis()
         self.tx = [t for t in self.genesis if t.is_transaction][0]
-
-        nc_storage_factory = NCMemoryStorageFactory()
-        store = MemoryNodeTrieStore()
-        block_trie = PatriciaTrie(store)
-        block_storage = NCBlockStorage(block_trie=block_trie)
-        self.runner = TestRunner(
-            self.manager.tx_storage, nc_storage_factory, block_storage, settings=self._settings, reactor=self.reactor
-        )
-
-        self.blueprint_id = BlueprintId(VertexId(b'a' * 32))
-
-        nc_catalog = self.manager.tx_storage.nc_catalog
-        nc_catalog.blueprints[self.blueprint_id] = MyBlueprint
+        self.blueprint_id = self._register_blueprint_class(MyBlueprint)
 
         self.nc1_id = ContractId(VertexId(b'1' * 32))
         self.nc2_id = ContractId(VertexId(b'2' * 32))
         self.nc3_id = ContractId(VertexId(b'3' * 32))
 
     def test_failing(self) -> None:
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         self.runner.create_contract(self.nc1_id, self.blueprint_id, ctx, 5)
         self.runner.create_contract(self.nc2_id, self.blueprint_id, ctx, 1)
         self.runner.create_contract(self.nc3_id, self.blueprint_id, ctx, 3)
@@ -192,7 +175,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         self.assertEqual(storage3.get_obj(b'counter', COUNTER_NC_TYPE), 2)
 
     def test_call_itself(self) -> None:
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         self.runner.create_contract(self.nc1_id, self.blueprint_id, ctx, 10)
         self.runner.call_public_method(self.nc1_id, 'set_contract', ctx, self.nc1_id)
 
@@ -200,14 +183,14 @@ class NCBlueprintTestCase(unittest.TestCase):
             self.runner.call_public_method(self.nc1_id, 'dec', ctx, fail_on_zero=True)
 
     def test_call_itself_view(self) -> None:
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         self.runner.create_contract(self.nc1_id, self.blueprint_id, ctx, 10)
 
         with pytest.raises(NCInvalidContractId, match='a contract cannot call itself'):
             self.runner.call_view_method(self.nc1_id, 'invalid_call_view_itself')
 
     def test_call_initialize(self) -> None:
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         self.runner.create_contract(self.nc1_id, self.blueprint_id, ctx, 10)
         self.runner.create_contract(self.nc2_id, self.blueprint_id, ctx, 10)
         self.runner.call_public_method(self.nc1_id, 'set_contract', ctx, self.nc2_id)
@@ -216,7 +199,7 @@ class NCBlueprintTestCase(unittest.TestCase):
             self.runner.call_public_method(self.nc1_id, 'invalid_call_initialize', ctx)
 
     def test_call_public_from_view(self) -> None:
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         self.runner.create_contract(self.nc1_id, self.blueprint_id, ctx, 10)
         self.runner.create_contract(self.nc2_id, self.blueprint_id, ctx, 10)
         self.runner.call_public_method(self.nc1_id, 'set_contract', ctx, self.nc2_id)
@@ -225,7 +208,7 @@ class NCBlueprintTestCase(unittest.TestCase):
             self.runner.call_view_method(self.nc1_id, 'invalid_call_public_from_view')
 
     def test_call_uninitialize_contract(self) -> None:
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         self.runner.create_contract(self.nc1_id, self.blueprint_id, ctx, 10)
         self.runner.call_public_method(self.nc1_id, 'set_contract', ctx, self.nc2_id)
 
@@ -238,7 +221,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         # we need to increase the recursion limit accordingly.
         sys.setrecursionlimit(5000)
 
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         self.runner.create_contract(self.nc1_id, self.blueprint_id, ctx, 100_000)
         self.runner.create_contract(self.nc2_id, self.blueprint_id, ctx, 100_000)
 
@@ -252,7 +235,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         self.assertEqual(len(trace.calls), self.runner.MAX_RECURSION_DEPTH)
 
     def test_max_calls_exceeded(self) -> None:
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         self.runner.create_contract(self.nc1_id, self.blueprint_id, ctx, 0)
         self.runner.create_contract(self.nc2_id, self.blueprint_id, ctx, 0)
         self.runner.call_public_method(self.nc1_id, 'set_contract', ctx, self.nc2_id)
@@ -273,8 +256,16 @@ class NCBlueprintTestCase(unittest.TestCase):
             NCDepositAction(token_uid=token2_uid, amount=12),
             NCDepositAction(token_uid=token3_uid, amount=13),
         ]
-        ctx = Context(actions, self.tx, MOCK_ADDRESS, timestamp=0)
-        self.runner.create_contract(self.nc1_id, self.blueprint_id, ctx, 0)
+        self.runner.create_contract(
+            self.nc1_id,
+            self.blueprint_id,
+            self.create_context(actions, self.tx, MOCK_ADDRESS),
+            0
+        )
+
+        self.create_token(token2_uid, 'tk2', 'tk2', TokenVersion.DEPOSIT)
+        self.create_token(token3_uid, 'tk3', 'tk3', TokenVersion.DEPOSIT)
+
         self.assertEqual(
             Balance(value=11, can_mint=False, can_melt=False), self.runner.get_current_balance(self.nc1_id, token1_uid)
         )
@@ -290,7 +281,7 @@ class NCBlueprintTestCase(unittest.TestCase):
             NCDepositAction(token_uid=token2_uid, amount=22),
             NCDepositAction(token_uid=token3_uid, amount=23),
         ]
-        ctx = Context(actions, self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context(actions, self.tx, MOCK_ADDRESS)
         self.runner.create_contract(self.nc2_id, self.blueprint_id, ctx, 0)
         self.assertEqual(
             Balance(value=21, can_mint=False, can_melt=False), self.runner.get_current_balance(self.nc2_id, token1_uid)
@@ -307,7 +298,7 @@ class NCBlueprintTestCase(unittest.TestCase):
             NCDepositAction(token_uid=token2_uid, amount=32),
             NCDepositAction(token_uid=token3_uid, amount=33),
         ]
-        ctx = Context(actions, self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context(actions, self.tx, MOCK_ADDRESS)
         self.runner.create_contract(self.nc3_id, self.blueprint_id, ctx, 0)
         self.assertEqual(
             Balance(value=31, can_mint=False, can_melt=False), self.runner.get_current_balance(self.nc3_id, token1_uid)
@@ -319,7 +310,7 @@ class NCBlueprintTestCase(unittest.TestCase):
             Balance(value=33, can_mint=False, can_melt=False), self.runner.get_current_balance(self.nc3_id, token3_uid)
         )
 
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         self.runner.call_public_method(self.nc1_id, 'set_contract', ctx, self.nc2_id)
         self.runner.call_public_method(self.nc2_id, 'set_contract', ctx, self.nc3_id)
 
@@ -328,7 +319,7 @@ class NCBlueprintTestCase(unittest.TestCase):
             NCWithdrawalAction(token_uid=token2_uid, amount=18),
             NCWithdrawalAction(token_uid=token3_uid, amount=65),
         ]
-        ctx = Context(actions, self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context(actions, self.tx, MOCK_ADDRESS)
         self.runner.call_public_method(self.nc1_id, 'get_tokens_from_another_contract', ctx)
 
         self.assertEqual(
@@ -361,7 +352,7 @@ class NCBlueprintTestCase(unittest.TestCase):
             Balance(value=4, can_mint=False, can_melt=False), self.runner.get_current_balance(self.nc3_id, token3_uid)
         )
 
-        ctx = Context(
+        ctx = self.create_context(
             [NCWithdrawalAction(token_uid=token1_uid, amount=100)],
             self.tx,
             MOCK_ADDRESS,
@@ -371,7 +362,7 @@ class NCBlueprintTestCase(unittest.TestCase):
             self.runner.call_public_method(self.nc1_id, 'get_tokens_from_another_contract', ctx)
 
     def test_transfer_between_contracts(self) -> None:
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         self.runner.create_contract(self.nc1_id, self.blueprint_id, ctx, 1)
         self.runner.create_contract(self.nc2_id, self.blueprint_id, ctx, 20)
         self.runner.create_contract(self.nc3_id, self.blueprint_id, ctx, 300)
@@ -389,12 +380,15 @@ class NCBlueprintTestCase(unittest.TestCase):
         token2_uid = TokenUid(b'b' * 32)
         token3_uid = TokenUid(b'c' * 32)
 
+        self.create_token(token2_uid, 'tk2', 'tk2', TokenVersion.DEPOSIT)
+        self.create_token(token3_uid, 'tk3', 'tk3', TokenVersion.DEPOSIT)
+
         actions = [
             NCDepositAction(token_uid=token1_uid, amount=100),
             NCDepositAction(token_uid=token2_uid, amount=50),
             NCDepositAction(token_uid=token3_uid, amount=25),
         ]
-        ctx = Context(actions, self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context(actions, self.tx, MOCK_ADDRESS)
         self.runner.call_public_method(self.nc1_id, 'split_balance', ctx)
 
         self.assertEqual(
@@ -428,7 +422,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         )
 
     def test_loop(self) -> None:
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         self.runner.create_contract(self.nc1_id, self.blueprint_id, ctx, 8)
         self.runner.create_contract(self.nc2_id, self.blueprint_id, ctx, 3)
         self.runner.create_contract(self.nc3_id, self.blueprint_id, ctx, 6)
@@ -455,7 +449,7 @@ class NCBlueprintTestCase(unittest.TestCase):
         self.assertEqual(storage3.get_obj(b'counter', COUNTER_NC_TYPE), 3)
 
     def test_call_view_after_public(self) -> None:
-        ctx = Context([], self.tx, MOCK_ADDRESS, timestamp=0)
+        ctx = self.create_context()
         self.runner.create_contract(self.nc1_id, self.blueprint_id, ctx, 8)
         self.runner.create_contract(self.nc2_id, self.blueprint_id, ctx, 3)
 

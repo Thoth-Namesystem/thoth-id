@@ -32,8 +32,8 @@ from hathor.profiler import get_cpu_profiler
 from hathor.pubsub import PubSubManager
 from hathor.transaction.base_transaction import BaseTransaction, TxOutput, Vertex
 from hathor.transaction.block import Block
-from hathor.transaction.exceptions import RewardLocked
 from hathor.transaction.storage.exceptions import (
+    TokenCreationTransactionDoesNotExist,
     TransactionDoesNotExist,
     TransactionIsNotABlock,
     TransactionNotInAllowedScopeError,
@@ -44,12 +44,12 @@ from hathor.transaction.storage.migrations import (
     add_closest_ancestor_block,
     change_score_acc_weight_metadata,
     include_funds_for_first_block,
+    nc_storage_compat2,
 )
 from hathor.transaction.storage.tx_allow_scope import TxAllowScope, tx_allow_context
 from hathor.transaction.transaction import Transaction
 from hathor.transaction.transaction_metadata import TransactionMetadata
 from hathor.types import VertexId
-from hathor.verification.transaction_verifier import TransactionVerifier
 
 if TYPE_CHECKING:
     from hathor.conf.settings import HathorSettings
@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from hathor.nanocontracts.catalog import NCBlueprintCatalog
     from hathor.nanocontracts.storage import NCBlockStorage, NCContractStorage, NCStorageFactory
     from hathor.nanocontracts.types import BlueprintId, ContractId
+    from hathor.transaction.token_creation_tx import TokenCreationTransaction
 
 cpu = get_cpu_profiler()
 
@@ -103,6 +104,7 @@ class TransactionStorage(ABC):
         change_score_acc_weight_metadata.Migration,
         add_closest_ancestor_block.Migration,
         include_funds_for_first_block.Migration,
+        nc_storage_compat2.Migration,
     ]
 
     _migrations: list[BaseMigration]
@@ -232,17 +234,17 @@ class TransactionStorage(ABC):
             previous_migration_state = migration_state
 
             should_run_migration: bool
-            if migration_state is MigrationState.NOT_STARTED:
+            if migration_state == MigrationState.NOT_STARTED:
                 self.log.debug('migration is new, will run', migration=migration_name)
                 should_run_migration = True
-            elif migration_state is MigrationState.STARTED:
+            elif migration_state == MigrationState.STARTED:
                 self.log.warn('this migration was started before, but it is not marked as COMPLETED or ERROR, '
                               'it will run again but might fail', migration=migration_name)
                 should_run_migration = True
-            elif migration_state is MigrationState.COMPLETED:
+            elif migration_state == MigrationState.COMPLETED:
                 self.log.debug('migration is already complete', migration=migration_name)
                 should_run_migration = False
-            elif migration_state is MigrationState.ERROR:
+            elif migration_state == MigrationState.ERROR:
                 self.log.error('this migration was run before but resulted in an error, the database will need to be '
                                'either manually fixed or discarded', migration=migration_name)
                 raise PartialMigrationError(f'Migration error state previously: {migration_name}')
@@ -398,7 +400,7 @@ class TransactionStorage(ABC):
 
     def is_only_valid_allowed(self) -> bool:
         """Whether only valid transactions are allowed to be returned/accepted by the storage, the default state."""
-        return self.get_allow_scope() is TxAllowScope.VALID
+        return self.get_allow_scope() == TxAllowScope.VALID
 
     def is_partially_validated_allowed(self) -> bool:
         """Whether partially validated transactions are allowed to be returned/accepted by the storage."""
@@ -547,6 +549,27 @@ class TransactionStorage(ABC):
         else:
             tx = self._get_transaction(hash_bytes)
         self.post_get_validation(tx)
+        return tx
+
+    def get_tx(self, vertex_id: VertexId) -> Transaction:
+        """Return a Transaction."""
+        tx = self.get_transaction(vertex_id)
+        assert isinstance(tx, Transaction)
+        return tx
+
+    def get_token_creation_transaction(self, hash_bytes: bytes) -> TokenCreationTransaction:
+        """Acquire the lock and get the token creation transaction with hash `hash_bytes`.
+
+        :param hash_bytes: Hash in bytes that will be checked.
+        :raises TransactionDoesNotExist: If the transaction with the given hash does not exist.
+        :raises TokenCreationTransactionDoesNotExist: If the transaction exists but is not a TokenCreationTransaction.
+        :return: The TokenCreationTransaction instance.
+        """
+        from hathor.transaction.token_creation_tx import TokenCreationTransaction
+
+        tx = self.get_transaction(hash_bytes)
+        if not isinstance(tx, TokenCreationTransaction):
+            raise TokenCreationTransactionDoesNotExist(hash_bytes)
         return tx
 
     def get_block_by_height(self, height: int) -> Optional[Block]:
@@ -1038,23 +1061,6 @@ class TransactionStorage(ABC):
         else:
             yield from self.iter_mempool_from_tx_tips()
 
-    def compute_transactions_that_became_invalid(self, new_best_height: int) -> list[BaseTransaction]:
-        """ This method will look for transactions in the mempool that have become invalid due to the reward lock.
-        It compares each tx's `min_height` to the `new_best_height`, accounting for the fact that the tx can be
-        confirmed by the next block.
-        """
-        from hathor.transaction.validation_state import ValidationState
-        to_remove: list[BaseTransaction] = []
-        for tx in self.iter_mempool_from_best_index():
-            try:
-                TransactionVerifier.verify_reward_locked_for_height(
-                    self._settings, tx, new_best_height, assert_min_height_verification=False
-                )
-            except RewardLocked:
-                tx.set_validation(ValidationState.INVALID)
-                to_remove.append(tx)
-        return to_remove
-
     def _construct_genesis_block(self) -> Block:
         """Return the genesis block."""
         block = Block(
@@ -1084,7 +1090,8 @@ class TransactionStorage(ABC):
         )
         tx1.update_hash()
 
-        assert tx1.hash == self._settings.GENESIS_TX1_HASH
+        assert tx1.hash == self._settings.GENESIS_TX1_HASH, \
+               f'{tx1.hash.hex()} != {self._settings.GENESIS_TX1_HASH.hex()}'
         return tx1
 
     def _construct_genesis_tx2(self) -> Transaction:
@@ -1098,7 +1105,8 @@ class TransactionStorage(ABC):
         )
         tx2.update_hash()
 
-        assert tx2.hash == self._settings.GENESIS_TX2_HASH
+        assert tx2.hash == self._settings.GENESIS_TX2_HASH, \
+               f'{tx2.hash.hex()} != {self._settings.GENESIS_TX2_HASH.hex()}'
         return tx2
 
     def get_parent_block(self, block: Block) -> Block:
@@ -1168,9 +1176,6 @@ class TransactionStorage(ABC):
         """Returns the source code associated with the given blueprint_id.
 
         The blueprint class could be in the catalog (first search), or it could be the tx_id of an on-chain blueprint.
-
-        A point of difference is that an OCB will have a `__blueprint__ = BlueprintName` line, where a built-in
-        blueprint will not.
         """
         import inspect
 

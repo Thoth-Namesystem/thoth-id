@@ -45,7 +45,7 @@ class NCCreationResourceTest(_BaseResourceTest._ResourceTest):
         password = unittest.OCB_TEST_PASSWORD.hex()
         dag_builder = TestDAGBuilder.from_manager(self.manager)
         artifacts = dag_builder.build_from_str(f'''
-            blockchain genesis b[1..11]
+            blockchain genesis b[1..12]
             b10 < dummy
 
             ocb1.ocb_private_key = "{private_key}"
@@ -72,16 +72,16 @@ class NCCreationResourceTest(_BaseResourceTest._ResourceTest):
             ocb1 <-- ocb2 <-- b11
             b11 < nc1 < nc2 < nc3 < nc4 < nc5
 
+            nc1 <-- nc2 <-- nc3 <-- nc4 <-- nc5 <-- b12
+
             ocb1.ocb_code = "{bet_code.encode().hex()}"
             ocb2.ocb_code = ```
-                from hathor.nanocontracts import Blueprint
-                from hathor.nanocontracts.context import Context
-                from hathor.nanocontracts.types import public
+                from hathor import Blueprint, Context, export, public
+                @export
                 class MyBlueprint(Blueprint):
                     @public
                     def initialize(self, ctx: Context) -> None:
                         pass
-                __blueprint__ = MyBlueprint
             ```
         ''')
 
@@ -152,7 +152,7 @@ class NCCreationResourceTest(_BaseResourceTest._ResourceTest):
             nc2.nc_method = initialize(0)
 
             nc3.nc_id = nc2
-            nc3.nc_method = nop()
+            nc3.nc_method = create_child_contract()
 
             nc4.nc_id = nc1
             nc4.nc_method = nop()

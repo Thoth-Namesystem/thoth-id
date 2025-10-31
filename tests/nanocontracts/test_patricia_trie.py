@@ -3,7 +3,7 @@ import tempfile
 from math import log
 from typing import Optional
 
-from hathor.nanocontracts.storage.backends import MemoryNodeTrieStore, RocksDBNodeTrieStore
+from hathor.nanocontracts.storage.backends import RocksDBNodeTrieStore
 from hathor.nanocontracts.storage.patricia_trie import Node, PatriciaTrie
 from hathor.storage.rocksdb_storage import RocksDBStorage
 from tests import unittest
@@ -25,10 +25,15 @@ def export_trie_outline(trie: PatriciaTrie, *, node: Optional[Node] = None) -> t
 
 
 class PatriciaTrieTestCase(unittest.TestCase):
-    __test__ = False
+    def setUp(self) -> None:
+        super().setUp()
+        directory = tempfile.mkdtemp()
+        self.tmpdirs.append(directory)
+        self.rocksdb_storage = RocksDBStorage(path=directory)
 
     def create_trie(self) -> PatriciaTrie:
-        raise NotImplementedError
+        store = RocksDBNodeTrieStore(self.rocksdb_storage)
+        return PatriciaTrie(store)
 
     def test_empty_key(self) -> None:
         trie = self.create_trie()
@@ -151,7 +156,7 @@ class PatriciaTrieTestCase(unittest.TestCase):
         data = {}
         for v_int in range(20_000):
             v = str(v_int).encode('ascii')
-            k = hashlib.sha1(v).digest()
+            k = hashlib.sha256(v).digest()
             data[k] = v
             trie.update(k, v)
 
@@ -175,7 +180,7 @@ class PatriciaTrieTestCase(unittest.TestCase):
         data = {}
         for v_int in range(20_000):
             v = str(v_int).encode('ascii')
-            k = hashlib.sha1(v).digest()
+            k = hashlib.sha256(v).digest()
             data[k] = v
             trie.update(k, v)
         trie.commit()
@@ -208,25 +213,3 @@ class PatriciaTrieTestCase(unittest.TestCase):
 
         for k, v in data.items():
             self.assertEqual(trie.get(k), v)
-
-
-class MemoryPatriciaTrieTest(PatriciaTrieTestCase):
-    __test__ = True
-
-    def create_trie(self) -> PatriciaTrie:
-        store = MemoryNodeTrieStore()
-        return PatriciaTrie(store)
-
-
-class RocksDBPatriciaTrieTest(PatriciaTrieTestCase):
-    __test__ = True
-
-    def setUp(self) -> None:
-        super().setUp()
-        directory = tempfile.mkdtemp()
-        self.tmpdirs.append(directory)
-        self.rocksdb_storage = RocksDBStorage(path=directory)
-
-    def create_trie(self) -> PatriciaTrie:
-        store = RocksDBNodeTrieStore(self.rocksdb_storage)
-        return PatriciaTrie(store)

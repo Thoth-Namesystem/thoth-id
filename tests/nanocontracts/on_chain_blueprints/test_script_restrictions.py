@@ -51,11 +51,7 @@ class OnChainBlueprintScriptTestCase(unittest.TestCase):
         self._ocb_mine(blueprint)
         return blueprint
 
-    def _test_forbid_syntax(
-        self,
-        code: str,
-        syntax_errors: tuple[str, ...],
-    ) -> None:
+    def _test_forbid_syntax(self, code: str, *, syntax_errors: tuple[str, ...]) -> None:
         blueprint = self._create_on_chain_blueprint(code)
         with self.assertRaises(InvalidNewTransaction) as cm:
             self.manager.vertex_handler.on_new_relayed_vertex(blueprint)
@@ -65,6 +61,10 @@ class OnChainBlueprintScriptTestCase(unittest.TestCase):
         # The first error is always the one that makes the tx fail
         assert cm.exception.__cause__.__cause__.args[0] == syntax_errors[0]
 
+        self._test_expected_syntax_errors(code, syntax_errors=syntax_errors)
+
+    def _test_expected_syntax_errors(self, code: str, *, syntax_errors: tuple[str, ...],) -> None:
+        blueprint = self._create_on_chain_blueprint(code)
         rules = self.manager.verification_service.verifiers.on_chain_blueprint.blueprint_code_rules()
         errors = []
         for rule in rules:
@@ -334,10 +334,74 @@ class OnChainBlueprintScriptTestCase(unittest.TestCase):
             ),
         )
 
+        # These are allowed:
+
+        self._test_expected_syntax_errors(
+            dedent('''
+                match 123:
+                    case int():
+                        pass
+            '''),
+            syntax_errors=(),
+        )
+
+        self._test_expected_syntax_errors(
+            dedent('''
+                match 123:
+                    case int(real=real):
+                        pass
+            '''),
+            syntax_errors=(),
+        )
+
+        self._test_expected_syntax_errors(
+            dedent('''
+                match 123:
+                    case {}:
+                        pass
+            '''),
+            syntax_errors=(),
+        )
+
+        self._test_expected_syntax_errors(
+            dedent('''
+                match 123:
+                    case {'real': 123}:
+                        pass
+            '''),
+            syntax_errors=(),
+        )
+
     def test_forbid_async_fn(self) -> None:
         self._test_forbid_syntax(
             'async def foo():\n    ...',
             syntax_errors=('Async functions are not allowed.',)
+        )
+
+    def test_forbid_float_literal(self) -> None:
+        self._test_forbid_syntax(
+            'a = 3.14',
+            syntax_errors=('Float literals are not allowed.',)
+        )
+        self._test_forbid_syntax(
+            'a = 3.',
+            syntax_errors=('Float literals are not allowed.',)
+        )
+        self._test_forbid_syntax(
+            'a = .14',
+            syntax_errors=('Float literals are not allowed.',)
+        )
+
+    def test_forbid_complex_literal(self) -> None:
+        self._test_forbid_syntax(
+            'a = 1j',
+            syntax_errors=('Complex literals are not allowed.',)
+        )
+
+    def test_forbid_float_division(self) -> None:
+        self._test_forbid_syntax(
+            'a = 1 / 2',
+            syntax_errors=('Simple / division results in float, use // instead.',)
         )
 
     def test_forbid_await_syntax(self) -> None:
@@ -367,19 +431,38 @@ class OnChainBlueprintScriptTestCase(unittest.TestCase):
             ),
         )
 
-    def test_blueprint_type_not_a_class(self) -> None:
-        blueprint = self._create_on_chain_blueprint('''__blueprint__ = "Bet"''')
+    def test_invalid_python_syntax(self) -> None:
+        code = 'x ++= 1'
+        blueprint = self._create_on_chain_blueprint(code)
         with self.assertRaises(InvalidNewTransaction) as cm:
             self.manager.vertex_handler.on_new_relayed_vertex(blueprint)
         assert isinstance(cm.exception.__cause__, OCBInvalidScript)
-        assert cm.exception.args[0] == 'full validation failed: __blueprint__ is not a class'
+        assert isinstance(cm.exception.__cause__.__cause__, SyntaxError)
+        assert cm.exception.args[0] == 'full validation failed: Could not correctly parse the script'
+
+    def test_blueprint_type_not_a_class(self) -> None:
+        blueprint = self._create_on_chain_blueprint(r'''
+from hathor import export
+@export
+def Foo():
+    pass
+''')
+        with self.assertRaises(InvalidNewTransaction) as cm:
+            self.manager.vertex_handler.on_new_relayed_vertex(blueprint)
+        assert isinstance(cm.exception.__cause__, OCBInvalidScript)
+        assert cm.exception.args[0] == 'full validation failed: Could not find a main Blueprint definition'
 
     def test_blueprint_type_not_blueprint_subclass(self) -> None:
-        blueprint = self._create_on_chain_blueprint('''class Foo:\n    ...\n__blueprint__ = Foo''')
+        blueprint = self._create_on_chain_blueprint(r'''
+from hathor import export
+@export
+class Foo():
+    pass
+''')
         with self.assertRaises(InvalidNewTransaction) as cm:
             self.manager.vertex_handler.on_new_relayed_vertex(blueprint)
         assert isinstance(cm.exception.__cause__, OCBInvalidScript)
-        assert cm.exception.args[0] == 'full validation failed: __blueprint__ is not a Blueprint subclass'
+        assert cm.exception.args[0] == 'full validation failed: exported Blueprint is not a Blueprint subclass'
 
     def test_zlib_bomb(self) -> None:
         from struct import error as StructError

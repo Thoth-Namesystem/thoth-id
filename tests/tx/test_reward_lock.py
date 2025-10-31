@@ -2,6 +2,7 @@ import pytest
 
 from hathor.crypto.util import get_address_b58_from_bytes, get_address_from_public_key
 from hathor.exception import InvalidNewTransaction
+from hathor.graphviz import GraphvizVisualizer
 from hathor.manager import HathorManager
 from hathor.simulator.utils import add_new_blocks
 from hathor.transaction import Block, Transaction, TxInput, TxOutput
@@ -9,7 +10,10 @@ from hathor.transaction.exceptions import RewardLocked
 from hathor.transaction.scripts import P2PKH
 from hathor.wallet import Wallet
 from tests import unittest
+from tests.dag_builder.builder import TestDAGBuilder
 from tests.utils import add_blocks_unlock_reward, get_genesis_key
+
+DEBUG: bool = False
 
 
 class TransactionTest(unittest.TestCase):
@@ -72,7 +76,7 @@ class TransactionTest(unittest.TestCase):
             tx, _ = self._spend_reward_tx(self.manager, reward_block)
             self.assertEqual(tx.static_metadata.min_height, unlock_height)
             with self.assertRaises(RewardLocked):
-                self.manager.verification_service.verify(tx, self.verification_params)
+                self.manager.verification_service.verify(tx, self.get_verification_params(self.manager))
             add_new_blocks(self.manager, 1, advance_clock=1)
 
         # now it should be spendable
@@ -132,7 +136,7 @@ class TransactionTest(unittest.TestCase):
         tx, _ = self._spend_reward_tx(self.manager, reward_block)
         self.assertEqual(tx.static_metadata.min_height, unlock_height)
         with self.assertRaises(RewardLocked):
-            self.manager.verification_service.verify(tx, self.verification_params)
+            self.manager.verification_service.verify(tx, self.get_verification_params(self.manager))
         with self.assertRaises(InvalidNewTransaction):
             self.assertTrue(self.manager.on_new_tx(tx))
 
@@ -175,7 +179,7 @@ class TransactionTest(unittest.TestCase):
 
         # now the new tx should not pass verification considering the reward lock
         with self.assertRaises(RewardLocked):
-            self.manager.verification_service.verify(tx, self.verification_params)
+            self.manager.verification_service.verify(tx, self.get_verification_params(self.manager))
 
         # the transaction should have been removed from the mempool
         self.assertNotIn(tx, self.manager.tx_storage.iter_mempool_from_best_index())
@@ -215,4 +219,56 @@ class TransactionTest(unittest.TestCase):
         self.manager.cpu_mining_service.resolve(tx)
         self.assertEqual(tx.static_metadata.min_height, unlock_height)
         with self.assertRaises(RewardLocked):
-            self.manager.verification_service.verify(tx, self.verification_params)
+            self.manager.verification_service.verify(tx, self.get_verification_params(self.manager))
+
+    def test_removed_tx_confirmed_by_orphan_block(self) -> None:
+        manager = self.create_peer('unittests')
+        dag_builder = TestDAGBuilder.from_manager(manager)
+        artifacts = dag_builder.build_from_str('''
+            blockchain genesis b[1..12]
+            blockchain b9 a[10..10]
+            b10 < dummy
+
+            # tx1 spends a reward that's unlocked by 1 block
+            b11 < tx1
+            b1.out[0] <<< tx1
+            tx1 <-- b12
+
+            # a10 causes a reorg and replaces b10-b12, invalidating tx1
+            a10.weight = 10
+            b12 < a10
+        ''')
+
+        tx1, = artifacts.get_typed_vertices(['tx1'], Transaction)
+        b12, a10 = artifacts.get_typed_vertices(['b12', 'a10'], Block)
+
+        artifacts.propagate_with(manager, up_to='b12')
+        if DEBUG:
+            dot = GraphvizVisualizer(manager.tx_storage, include_verifications=True, include_funds=True).dot()
+            dot.render('after-b12')
+
+        assert b12.get_metadata().validation.is_valid()
+        assert b12.get_metadata().voided_by is None
+
+        assert tx1.get_metadata().first_block == b12.hash
+        assert tx1.get_metadata().validation.is_valid()
+        assert tx1.get_metadata().voided_by is None
+
+        artifacts.propagate_with(manager, up_to='a10')
+        if DEBUG:
+            dot = GraphvizVisualizer(manager.tx_storage, include_verifications=True, include_funds=True).dot()
+            dot.render('after-a10')
+
+        assert b12.get_metadata().validation.is_invalid()
+        assert b12.get_metadata().voided_by == {b12.hash, self._settings.PARTIALLY_VALIDATED_ID}
+
+        assert a10.get_metadata().validation.is_valid()
+        assert a10.get_metadata().voided_by is None
+
+        assert tx1.get_metadata().first_block is None
+        assert tx1.get_metadata().validation.is_invalid()
+        assert tx1.get_metadata().voided_by == {self._settings.PARTIALLY_VALIDATED_ID}
+
+        assert tx1 not in manager.tx_storage.iter_mempool_from_best_index()
+        assert not manager.tx_storage.transaction_exists(tx1.hash)
+        assert not manager.tx_storage.transaction_exists(b12.hash)

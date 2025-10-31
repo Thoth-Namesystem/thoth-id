@@ -83,7 +83,7 @@ class SyncSupportLevel(IntEnum):
                 vertex_handler=vertex_handler,
             )
             p2p_manager.add_sync_factory(SyncVersion.V2, sync_v2_factory)
-        if sync_v2_support is cls.ENABLED:
+        if sync_v2_support == cls.ENABLED:
             p2p_manager.enable_sync_version(SyncVersion.V2)
 
 
@@ -107,7 +107,7 @@ class BuildArtifacts(NamedTuple):
 
 
 _VertexVerifiersBuilder: TypeAlias = Callable[
-    [HathorSettingsType, DifficultyAdjustmentAlgorithm, FeatureService],
+    [Reactor, HathorSettingsType, DifficultyAdjustmentAlgorithm, FeatureService, TransactionStorage],
     VertexVerifiers
 ]
 
@@ -260,7 +260,7 @@ class Builder:
             event_manager=event_manager,
             wallet=wallet,
             rng=self._rng,
-            checkpoints=self._checkpoints,
+            checkpoints=self._checkpoints or settings.CHECKPOINTS,
             capabilities=self._capabilities,
             environment_info=get_environment_info(self._cmdline, str(peer.id)),
             bit_signaling_service=bit_signaling_service,
@@ -271,6 +271,7 @@ class Builder:
             vertex_parser=vertex_parser,
             poa_block_producer=poa_block_producer,
             runner_factory=runner_factory,
+            feature_service=feature_service,
             **kwargs
         )
 
@@ -414,6 +415,7 @@ class Builder:
                 runner_factory=self._get_or_create_runner_factory(),
                 nc_log_storage=self._get_or_create_nc_log_storage(),
                 nc_calls_sorter=nc_calls_sorter,
+                feature_service=self._get_or_create_feature_service(),
             )
 
         return self._consensus
@@ -588,10 +590,12 @@ class Builder:
             settings = self._get_or_create_settings()
             verifiers = self._get_or_create_vertex_verifiers()
             storage = self._get_or_create_tx_storage()
+            nc_storage_factory = self._get_or_create_nc_storage_factory()
             self._verification_service = VerificationService(
                 settings=settings,
                 verifiers=verifiers,
                 tx_storage=storage,
+                nc_storage_factory=nc_storage_factory,
             )
 
         return self._verification_service
@@ -604,17 +608,27 @@ class Builder:
 
     def _get_or_create_vertex_verifiers(self) -> VertexVerifiers:
         if self._vertex_verifiers is None:
+            reactor = self._get_reactor()
             settings = self._get_or_create_settings()
             feature_service = self._get_or_create_feature_service()
             daa = self._get_or_create_daa()
+            tx_storage = self._get_or_create_tx_storage()
 
             if self._vertex_verifiers_builder:
-                self._vertex_verifiers = self._vertex_verifiers_builder(settings, daa, feature_service)
+                self._vertex_verifiers = self._vertex_verifiers_builder(
+                    reactor,
+                    settings,
+                    daa,
+                    feature_service,
+                    tx_storage
+                )
             else:
                 self._vertex_verifiers = VertexVerifiers.create_defaults(
+                    reactor=reactor,
                     settings=settings,
                     daa=daa,
                     feature_service=feature_service,
+                    tx_storage=tx_storage,
                 )
 
         return self._vertex_verifiers

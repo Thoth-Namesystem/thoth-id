@@ -30,8 +30,7 @@ from hathor.nanocontracts.types import (
     NCGrantAuthorityAction,
     NCWithdrawalAction,
 )
-from hathor.transaction.transaction import TokenInfo
-from hathor.types import TokenUid
+from hathor.transaction.token_info import TokenInfoDict, TokenVersion
 
 T = TypeVar('T', bound=BaseAction)
 
@@ -51,7 +50,7 @@ class BalanceRules(ABC, Generic[T]):
         self.action = action
 
     @abstractmethod
-    def verification_rule(self, token_dict: dict[TokenUid, TokenInfo]) -> None:
+    def verification_rule(self, token_dict: TokenInfoDict) -> None:
         """
         Define how the respective action interacts with the transaction's
         token_dict during the verification phase, updating it.
@@ -100,10 +99,13 @@ class _DepositRules(BalanceRules[NCDepositAction]):
     """
 
     @override
-    def verification_rule(self, token_dict: dict[TokenUid, TokenInfo]) -> None:
-        token_info = token_dict.get(self.action.token_uid, TokenInfo.get_default())
+    def verification_rule(self, token_dict: TokenInfoDict) -> None:
+        token_info = token_dict[self.action.token_uid]
         token_info.amount = token_info.amount + self.action.amount
         token_dict[self.action.token_uid] = token_info
+
+        if token_info.version == TokenVersion.FEE:
+            token_info.chargeable_outputs += 1
 
     @override
     def nc_callee_execution_rule(self, callee_changes_tracker: NCChangesTracker) -> None:
@@ -124,10 +126,13 @@ class _WithdrawalRules(BalanceRules[NCWithdrawalAction]):
     """
 
     @override
-    def verification_rule(self, token_dict: dict[TokenUid, TokenInfo]) -> None:
-        token_info = token_dict.get(self.action.token_uid, TokenInfo.get_default())
+    def verification_rule(self, token_dict: TokenInfoDict) -> None:
+        token_info = token_dict[self.action.token_uid]
         token_info.amount = token_info.amount - self.action.amount
         token_dict[self.action.token_uid] = token_info
+
+        if token_info.version == TokenVersion.FEE:
+            token_info.chargeable_inputs += 1
 
     @override
     def nc_callee_execution_rule(self, callee_changes_tracker: NCChangesTracker) -> None:
@@ -148,9 +153,9 @@ class _GrantAuthorityRules(BalanceRules[NCGrantAuthorityAction]):
     """
 
     @override
-    def verification_rule(self, token_dict: dict[TokenUid, TokenInfo]) -> None:
+    def verification_rule(self, token_dict: TokenInfoDict) -> None:
         assert self.action.token_uid != HATHOR_TOKEN_UID
-        token_info = token_dict.get(self.action.token_uid, TokenInfo.get_default())
+        token_info = token_dict[self.action.token_uid]
         if self.action.mint and not token_info.can_mint:
             raise NCInvalidAction(
                 f'{self.action.name} token {self.action.token_uid.hex()} requires mint, but no input has it'
@@ -200,9 +205,9 @@ class _AcquireAuthorityRules(BalanceRules[NCAcquireAuthorityAction]):
     """
 
     @override
-    def verification_rule(self, token_dict: dict[TokenUid, TokenInfo]) -> None:
+    def verification_rule(self, token_dict: TokenInfoDict) -> None:
         assert self.action.token_uid != HATHOR_TOKEN_UID
-        token_info = token_dict.get(self.action.token_uid, TokenInfo.get_default())
+        token_info = token_dict[self.action.token_uid]
         token_info.can_mint = token_info.can_mint or self.action.mint
         token_info.can_melt = token_info.can_melt or self.action.melt
         token_dict[self.action.token_uid] = token_info

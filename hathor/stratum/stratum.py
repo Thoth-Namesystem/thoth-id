@@ -530,7 +530,11 @@ class StratumProtocol(JSONRPC):
         self.log.debug('share received', block=tx, block_base=block_base.hex(), block_base_hash=block_base_hash.hex())
 
         feature_service = FeatureService(settings=self._settings, tx_storage=self.manager.tx_storage)
-        verifier = VertexVerifier(settings=self._settings, feature_service=feature_service)
+        verifier = VertexVerifier(
+            reactor=self.manager.reactor,
+            settings=self._settings,
+            feature_service=feature_service
+        )
 
         try:
             verifier.verify_pow(tx, override_weight=job.weight)
@@ -636,7 +640,7 @@ class StratumProtocol(JSONRPC):
         job.weight = min(share_weight, tx.weight)
 
         def jobTimeout(job: ServerJob, protocol: StratumProtocol) -> None:
-            if job is protocol.current_job and job.submitted is None:
+            if job is protocol.current_job and job.submitted is None:  # allow-is
                 # Only send new jobs if miner is still connected
                 if self.miner_id in self.factory.miner_protocols:
                     protocol.job_request()

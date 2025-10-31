@@ -26,6 +26,7 @@ from hathor.exception import HathorError, InvalidNewTransaction
 from hathor.execution_manager import ExecutionManager
 from hathor.feature_activation.feature import Feature
 from hathor.feature_activation.feature_service import FeatureService
+from hathor.nanocontracts.utils import is_nano_active
 from hathor.profiler import get_cpu_profiler
 from hathor.pubsub import HathorEvents, PubSubManager
 from hathor.reactor import ReactorProtocol
@@ -84,14 +85,29 @@ class VertexHandler:
     @cpu.profiler('on_new_block')
     @inlineCallbacks
     def on_new_block(self, block: Block, *, deps: list[Transaction]) -> Generator[Any, Any, bool]:
+        """Called by block sync."""
         parent_block_hash = block.get_block_parent_hash()
         parent_block = self._tx_storage.get_block(parent_block_hash)
+        parent_meta = parent_block.get_metadata()
 
         enable_checkdatasig_count = self._feature_service.is_feature_active(
             vertex=parent_block,
-            feature=Feature.COUNT_CHECKDATASIG_OP
+            feature=Feature.COUNT_CHECKDATASIG_OP,
         )
-        params = VerificationParams(enable_checkdatasig_count=enable_checkdatasig_count)
+
+        enable_nano = is_nano_active(
+            settings=self._settings, block=parent_block, feature_service=self._feature_service
+        )
+
+        if parent_meta.nc_block_root_id is None:
+            # This case only happens for the genesis and during sync of a voided chain.
+            assert parent_block.is_genesis or parent_meta.voided_by
+
+        params = VerificationParams(
+            enable_checkdatasig_count=enable_checkdatasig_count,
+            enable_nano=enable_nano,
+            nc_block_root_id=parent_meta.nc_block_root_id,
+        )
 
         for tx in deps:
             if not self._tx_storage.transaction_exists(tx.hash):
@@ -107,7 +123,13 @@ class VertexHandler:
 
     @cpu.profiler('on_new_mempool_transaction')
     def on_new_mempool_transaction(self, tx: Transaction) -> bool:
-        params = VerificationParams.default_for_mempool()
+        """Called by mempool sync."""
+        best_block = self._tx_storage.get_best_block()
+        enable_nano = is_nano_active(settings=self._settings, block=best_block, feature_service=self._feature_service)
+        params = VerificationParams.default_for_mempool(
+            enable_nano=enable_nano,
+            best_block=best_block,
+        )
         return self._old_on_new_vertex(tx, params)
 
     @cpu.profiler('on_new_relayed_vertex')
@@ -116,9 +138,21 @@ class VertexHandler:
         vertex: BaseTransaction,
         *,
         quiet: bool = False,
+        reject_locked_reward: bool = True,
     ) -> bool:
+        """Called for unsolicited vertex received, usually due to real time relay."""
+        best_block = self._tx_storage.get_best_block()
+        best_block_meta = best_block.get_metadata()
+        enable_nano = is_nano_active(settings=self._settings, block=best_block, feature_service=self._feature_service)
+        if best_block_meta.nc_block_root_id is None:
+            assert best_block.is_genesis
         # XXX: checkdatasig enabled for relayed vertices
-        params = VerificationParams.default_for_mempool()
+        params = VerificationParams(
+            enable_checkdatasig_count=True,
+            reject_locked_reward=reject_locked_reward,
+            enable_nano=enable_nano,
+            nc_block_root_id=best_block_meta.nc_block_root_id,
+        )
         return self._old_on_new_vertex(vertex, params, quiet=quiet)
 
     @cpu.profiler('_old_on_new_vertex')
@@ -218,14 +252,9 @@ class VertexHandler:
             init_static_metadata=False,
         )
         self._tx_storage.indexes.update(vertex)
-        if self._tx_storage.indexes.mempool_tips:
-            self._tx_storage.indexes.mempool_tips.update(vertex)  # XXX: move to indexes.update
 
         # Publish to pubsub manager the new tx accepted, now that it's full validated
         self._pubsub.publish(HathorEvents.NETWORK_NEW_TX_ACCEPTED, tx=vertex)
-
-        if self._tx_storage.indexes.mempool_tips:
-            self._tx_storage.indexes.mempool_tips.update(vertex)
 
         if self._wallet:
             # TODO Remove it and use pubsub instead.
