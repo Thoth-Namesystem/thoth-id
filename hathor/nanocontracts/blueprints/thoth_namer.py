@@ -515,7 +515,7 @@ class ThothNamer(Blueprint):
         """Get the resolving address associated with a name."""
         self._check_name_expired(name, now_timestamp)
         resolving_address = self.registered_names[name].resolving_address
-        return resolving_address.hex()
+        return str(resolving_address)
 
     @view
     def get_name_data(self, name: str) -> dict[str, str]:
@@ -538,7 +538,7 @@ class ThothNamer(Blueprint):
                 on the contract, we can\'t say for sure who is \
                 the owner at this moment.')
 
-        return record.owner_address.hex()
+        return str(record.owner_address)
 
     @view
     def get_name_expiration_info(self, name: str, now_timestamp: Timestamp) -> dict[str, str]:
@@ -653,7 +653,7 @@ class ThothNamer(Blueprint):
     @view
     def get_dev_address(self) -> str:
         """Get the developer's address."""
-        return self.dev_address.hex()
+        return str(self.dev_address)
 
     @view
     def get_contract_domain(self) -> str:
@@ -923,9 +923,10 @@ class ThothNamer(Blueprint):
     def _serialize_name_record(self, record: NameRecord) -> dict[str, str]:
         base_data = {
             'token_uid': record.token_uid.hex(),
-            'owner_address': 'None' if not record.is_deposited else record.owner_address.hex(),
-            'manager_address': record.manager_address.hex(),
-            'resolving_address': record.resolving_address.hex(),
+            'owner_address': str(record.owner_address),
+            'is_deposited': str(record.is_deposited),
+            'manager_address': str(record.manager_address),
+            'resolving_address': str(record.resolving_address),
             'expiration_date': str(record.expiration_date)
         }
         # Add profile data
