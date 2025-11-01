@@ -169,15 +169,25 @@ class ThothNamer(Blueprint):
         self.base_fee = base_fee
         self.total_fee = 0
         self.dev_address = ctx.caller_id
-        self.fee_multiplier[3] = 20
-        self.fee_multiplier[4] = 10
-        self.fee_multiplier[5] = 1
+        
+        self.fee_multiplier: dict[int, int] = {
+            3: 20,
+            4: 10,
+            5: 1
+        }
+
         self.max_profile_data_entries = max_profile_data_entries
         self.max_profile_key_length = max_profile_key_length
         self.max_profile_value_length = max_profile_value_length
         self.max_token_symbol_length = max_token_symbol_length
         self.max_total_profile_size = max_total_profile_size
         self.grace_period_days = grace_period_days
+
+        # registered_names: dict[str, NameRecord]
+
+        self.registered_names: dict[str, NameRecord]  = {}  # Mapping of names to NameRecord objects
+        self.manager_names: dict[Address, list[str]]  = {}  # Mapping of manager addresses to their managed names
+        self.manager_primary_name: dict[Address, str] = {}  # Mapping of manager addresses to their primary name
 
     @public(allow_deposit=True, allow_withdrawal=False)
     def create_name(self, ctx: Context, name: str, token_symbol: str) -> None:
