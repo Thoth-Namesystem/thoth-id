@@ -183,8 +183,6 @@ class ThothNamer(Blueprint):
         self.max_total_profile_size = max_total_profile_size
         self.grace_period_days = grace_period_days
 
-        # registered_names: dict[str, NameRecord]
-
         self.registered_names: dict[str, NameRecord]  = {}  # Mapping of names to NameRecord objects
         self.manager_names: dict[Address, list[str]]  = {}  # Mapping of manager addresses to their managed names
         self.manager_primary_name: dict[Address, str] = {}  # Mapping of manager addresses to their primary name
@@ -197,14 +195,14 @@ class ThothNamer(Blueprint):
 
         if name in self.registered_names:
             # Name exists, check if it can be re-registered
-            if self.is_name_available(name, ctx.timestamp):
+            if self.is_name_available(name, ctx.block.timestamp):
                 # It's expired and past grace period, so clean up before re-registering
                 old_record = self.registered_names[name]
                 self._remove_name_from_manager(old_record.manager_address, name)
             else:
                 # It's not available (active or in grace period)
                 record = self.registered_names[name]
-                if record.expiration_date > ctx.timestamp:
+                if record.expiration_date > ctx.block.timestamp:
                     raise NameAlreadyExists('Name is already registered')
                 else:
                     grace_period_end = record.expiration_date + self.grace_period_days * SECONDS_PER_DAY
@@ -218,7 +216,7 @@ class ThothNamer(Blueprint):
         years_of_access = self._get_years_of_access(ctx, fee)
 
         # Calculate expiration date
-        expiration_date = ctx.timestamp + years_of_access * SECONDS_PER_YEAR
+        expiration_date = ctx.block.timestamp + years_of_access * SECONDS_PER_YEAR
 
         # Mint new NFT and create name record
         token_uid = self._mint_name_nft(name, token_symbol)
@@ -414,7 +412,7 @@ class ThothNamer(Blueprint):
 
         # Calculate new expiration date
         current_expiration = record.expiration_date
-        new_expiration_date = max(current_expiration, ctx.timestamp) + years_of_access * SECONDS_PER_YEAR
+        new_expiration_date = max(current_expiration, ctx.block.timestamp) + years_of_access * SECONDS_PER_YEAR
 
         # Update expiration in record
         self.registered_names[name] = record.update_expiration_date(new_expiration_date)
