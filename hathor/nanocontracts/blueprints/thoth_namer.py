@@ -265,7 +265,7 @@ class ThothNamer(Blueprint):
         if record.manager_address != ctx.caller_id:
             raise NotAuthorized('Only the manager can delete profile data')
             
-        self.registered_names[name] = record.remove_data(key)
+        self.registered_names.update({name: record.remove_data(key)})
     
     @public(allow_actions=False)
     def update_profile_data(self, ctx: Context, name: str, key: str, value: str) -> None:
@@ -312,7 +312,7 @@ class ThothNamer(Blueprint):
         if record.owner_address != ctx.caller_id:
             raise NotAuthorized('Only the current owner can change the owner address')
 
-        self.registered_names[name] = record.update_owner_address(new_owner_address)
+        self.registered_names.update({name: record.update_owner_address(new_owner_address)})
 
     @public(allow_actions=False)
     def change_manager_address(self,
@@ -341,7 +341,7 @@ class ThothNamer(Blueprint):
         # Update manager mappings
         self._update_name_manager(name, record.manager_address, new_manager_address)
             
-        self.registered_names[name] = record.update_manager_address(new_manager_address)
+        self.registered_names.update({name: record.update_manager_address(new_manager_address)})
 
     @public(allow_actions=False)
     def change_manager_primary_name(self, ctx: Context, name: str) -> None:
@@ -379,7 +379,7 @@ class ThothNamer(Blueprint):
         if record.is_deposited:
             raise AlreadyDeposited('The token is already deposited')
 
-        self.registered_names[name] = record.toggle_is_deposited().update_owner_address(new_owner_address=ctx.caller_id)
+        self.registered_names.update({name: record.toggle_is_deposited().update_owner_address(new_owner_address=ctx.caller_id)})
 
     @public(allow_deposit=False, allow_withdrawal=True)
     def withdraw_nft(self, ctx: Context, name: str) -> None:
@@ -397,7 +397,7 @@ class ThothNamer(Blueprint):
         self._check_action_record_token(ctx, record.token_uid, NCActionType.WITHDRAWAL)
 
         # Return NFT and revoke authorization
-        self.registered_names[name] = record.toggle_is_deposited()
+        self.registered_names.update({name: record.toggle_is_deposited()})
 
     @public(allow_deposit=True, allow_withdrawal=False)
     def renew_name(self, ctx: Context, name: str) -> None:
@@ -416,7 +416,7 @@ class ThothNamer(Blueprint):
         new_expiration_date = max(current_expiration, ctx.block.timestamp) + years_of_access * SECONDS_PER_YEAR
 
         # Update expiration in record
-        self.registered_names[name] = record.update_expiration_date(new_expiration_date)
+        self.registered_names.update({name: record.update_expiration_date(new_expiration_date)})
 
         self.total_fee += fee * years_of_access
 
@@ -448,7 +448,7 @@ class ThothNamer(Blueprint):
                                 Length 5 will be used for all other lengths.')
         if new_multiplier <= 0:
             raise InvalidMultiplier('Multiplier must be a positive value.')
-        self.fee_multiplier[length] = new_multiplier
+        self.fee_multiplier.update({length: new_multiplier})
 
     @public(allow_actions=False)
     def change_max_profile_data_entries(self, ctx: Context, new_max_profile_data_entries: int) -> None:
@@ -766,8 +766,11 @@ class ThothNamer(Blueprint):
         Returns:
             list[str]: List of names managed by this address (empty if none)
         """
-        return self.manager_names.get(manager_address, [])
-
+        names = self.manager_names.get(manager_address)
+        if names is None:
+            return []
+        return list(names)
+    
     @view
     def get_manager_primary_name(self, manager_address: Address) -> str:
         """Get the primary name for a manager."""
@@ -833,7 +836,7 @@ class ThothNamer(Blueprint):
         token_uid = self.syscall.create_deposit_token(
             token_name=nft_name, 
             token_symbol=token_symbol,
-            amount=0.01,
+            amount=1,
             melt_authority=True,
             mint_authority=True
         )
@@ -910,24 +913,24 @@ class ThothNamer(Blueprint):
     
     def _add_name_to_manager(self, manager_address: Address, name: str) -> None:
         """Add a name to a manager's list of managed names."""
-        names = list(self.manager_names.get(manager_address, []))
+        if manager_address not in self.manager_names:
+            self.manager_names[manager_address] = []
+        names = self.manager_names[manager_address]
         if name not in names:
             names.append(name)
-            self.manager_names[manager_address] = names
             
     def _remove_name_from_manager(self, manager_address: Address, name: str) -> None:
         """Remove a name from a manager's list of managed names."""
         if manager_address in self.manager_names:
-            names_list = list(self.manager_names[manager_address])
+            names_list = self.manager_names[manager_address]
             if name in names_list:
                 names_list.remove(name)
-                self.manager_names.update({manager_address: names_list})
 
             if self.manager_primary_name.get(manager_address) == name and not names_list:
                 del self.manager_primary_name[manager_address]
 
             # Clean up empty lists
-            if not self.manager_names[manager_address]:
+            if not names_list:
                 del self.manager_names[manager_address]
                 
     def _update_name_manager(self, name: str, old_manager: Address, new_manager: Address) -> None:
