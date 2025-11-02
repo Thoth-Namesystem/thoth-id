@@ -183,9 +183,9 @@ class ThothNamer(Blueprint):
         self.max_total_profile_size = max_total_profile_size
         self.grace_period_days = grace_period_days
 
-        self.registered_names: dict[str, NameRecord]  = {}  # Mapping of names to NameRecord objects
-        self.manager_names: dict[Address, list[str]]  = {}  # Mapping of manager addresses to their managed names
-        self.manager_primary_name: dict[Address, str] = {}  # Mapping of manager addresses to their primary name
+        self.registered_names: dict[str, NameRecord]  = {}
+        self.manager_names: dict[Address, list[str]]  = {}
+        self.manager_primary_name: dict[Address, str] = {}
 
     @public(allow_deposit=True, allow_withdrawal=False)
     def create_name(self, ctx: Context, name: str, token_symbol: str) -> None:
@@ -220,7 +220,8 @@ class ThothNamer(Blueprint):
 
         # Mint new NFT and create name record
         token_uid = self._mint_name_nft(name, token_symbol)
-        self.registered_names[name] = NameRecord(
+        
+        self.registered_names.update({name: NameRecord(
             token_uid=token_uid,
             owner_address=ctx.caller_id, 
             is_deposited=True,
@@ -228,7 +229,7 @@ class ThothNamer(Blueprint):
             resolving_address=ctx.caller_id,
             expiration_date=expiration_date,
             data={}  # Initialize with empty data dictionary
-        )
+        )})
         
         # Add to manager's list of names
         self._add_name_to_manager(ctx.caller_id, name)
@@ -829,7 +830,13 @@ class ThothNamer(Blueprint):
         # Create NFT metadata
         nft_name = f'{name[:26]}.{self.domain}'
         
-        token_uid = self.syscall.create_token(nft_name, token_symbol, 1, True, True)
+        token_uid = self.syscall.create_deposit_token(
+            token_name=nft_name, 
+            token_symbol=token_symbol,
+            amount=0.01,
+            melt_authority=True,
+            mint_authority=True
+        )
         
         # Return the token UID
         return token_uid
@@ -906,7 +913,7 @@ class ThothNamer(Blueprint):
         names = list(self.manager_names.get(manager_address, []))
         if name not in names:
             names.append(name)
-            self.manager_names[manager_address] = names
+            #self.manager_names.update({manager_address: names})
             
     def _remove_name_from_manager(self, manager_address: Address, name: str) -> None:
         """Remove a name from a manager's list of managed names."""
@@ -914,7 +921,7 @@ class ThothNamer(Blueprint):
             names_list = list(self.manager_names[manager_address])
             if name in names_list:
                 names_list.remove(name)
-                self.manager_names[manager_address] = names_list
+                self.manager_names.update({manager_address: names_list})
 
             if self.manager_primary_name.get(manager_address) == name and not names_list:
                 del self.manager_primary_name[manager_address]
@@ -949,7 +956,7 @@ class ThothNamer(Blueprint):
 
     def _set_manager_primary_name(self, manager_address: Address, name: str) -> None:
         """Set the primary name for a manager."""
-        self.manager_primary_name[manager_address] = name
+        self.manager_primary_name.update({manager_address: name})
 
 class NameNotFound(NCFail):
     """Raised when attempting to access a name that is not registered in the system.
