@@ -913,7 +913,7 @@ class ThothNamer(Blueprint):
         names = list(self.manager_names.get(manager_address, []))
         if name not in names:
             names.append(name)
-            #self.manager_names.update({manager_address: names})
+            self.manager_names[manager_address] = names
             
     def _remove_name_from_manager(self, manager_address: Address, name: str) -> None:
         """Remove a name from a manager's list of managed names."""
