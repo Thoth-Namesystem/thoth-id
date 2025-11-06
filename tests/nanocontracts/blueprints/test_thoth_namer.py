@@ -55,7 +55,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         }
         init_args.update(kwargs)
 
-        context = self.create_context(address=Address(self.dev_address))
+        context = self.create_context(caller_id=Address(self.dev_address))
         self.runner.create_contract(
             self.nc_id,
             self.blueprint_id,
@@ -73,7 +73,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_contract_domain'), init_args["domain"])
         fee_structure = self.runner.call_view_method(self.nc_id, 'get_fee_structure')
         self.assertEqual(fee_structure['base_fee'], init_args["base_fee"])
-        self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_dev_address'), self.dev_address.hex())
+        self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_dev_address'), get_address_b58_from_bytes(self.dev_address))
 
     def test_basic_flow(self) -> None:
         self.initialize_contract()
@@ -89,23 +89,23 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         # Verify owner
         self.assertEqual(
             self.runner.call_view_method(self.nc_id, 'get_name_owner', name),
-            owner_address.hex()
+            get_address_b58_from_bytes(owner_address)
         )
 
         # Change resolving address
         new_address, _ = self.gen_random_address_with_key()
-        context = self.create_context(address=Address(owner_address))
+        context = self.create_context(caller_id=Address(owner_address))
         self.runner.call_public_method(self.nc_id, 'change_resolving_address', context, name, new_address)
 
         # Verify resolving address changed
         self.assertEqual(
             self.runner.call_view_method(self.nc_id, 'resolve_name', name, self.get_current_timestamp()),
-            new_address.hex()
+            get_address_b58_from_bytes(new_address)
         )
 
     def test_initialize_edge_cases(self):
         """Test edge cases for contract initialization."""
-        context = self.create_context(address=Address(self.dev_address))
+        context = self.create_context(caller_id=Address(self.dev_address))
 
         # Test invalid domain
         with self.assertNCFail('InvalidDomain'):
@@ -211,7 +211,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
 
         # Try unauthorized operations
         unauthorized_address, _ = self.gen_random_address_with_key()
-        context = self.create_context(address=Address(unauthorized_address))
+        context = self.create_context(caller_id=Address(unauthorized_address))
 
         with self.assertNCFail('NotAuthorized'):
             self.runner.call_public_method(self.nc_id, 'change_resolving_address', context, name, unauthorized_address)
@@ -221,12 +221,12 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
 
         # Test valid ownership transfer
         new_owner, _ = self.gen_random_address_with_key()
-        context = self.create_context(address=Address(owner_address))
+        context = self.create_context(caller_id=Address(owner_address))
         self.runner.call_public_method(self.nc_id, 'change_name_owner', context, name, new_owner)
 
         self.assertEqual(
             self.runner.call_view_method(self.nc_id, 'get_name_owner', name),
-            new_owner.hex()
+            get_address_b58_from_bytes(new_owner)
         )
 
     def test_profile_data_edge_cases(self):
@@ -238,7 +238,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', name)
         owner_address = self._register_name(name, fee)
         
-        context = self.create_context(address=Address(owner_address))
+        context = self.create_context(caller_id=Address(owner_address))
 
         # Test maximum key length
         max_key = "a" * self.max_profile_key_length
@@ -274,12 +274,12 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
             
         # Test unauthorized update
         unauthorized_address, _ = self.gen_random_address_with_key()
-        context = self.create_context(address=Address(unauthorized_address))
+        context = self.create_context(caller_id=Address(unauthorized_address))
         with self.assertNCFail('NotAuthorized'):
             self.runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "key", "value")
             
         # Test deleting profile data
-        context = self.create_context(address=Address(owner_address))
+        context = self.create_context(caller_id=Address(owner_address))
         self.runner.call_public_method(self.nc_id, 'delete_profile_data', context, name, "key0")
         
         # Test deleting non-existent key
@@ -310,7 +310,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_manager_primary_name', manager_address), name1)
 
         # Change primary name
-        context = self.create_context(address=Address(manager_address))
+        context = self.create_context(caller_id=Address(manager_address))
         self.runner.call_public_method(self.nc_id, 'change_manager_primary_name', context, name2)
         self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_manager_primary_name', manager_address), name2)
 
@@ -332,22 +332,22 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
 
         # Test fee change
         new_fee = 200
-        context = self.create_context(address=Address(self.dev_address))
+        context = self.create_context(caller_id=Address(self.dev_address))
         self.runner.call_public_method(self.nc_id, 'change_fee', context, new_fee)
         fee_structure = self.runner.call_view_method(self.nc_id, 'get_fee_structure')
         self.assertEqual(fee_structure['base_fee'], new_fee)
 
         # Test unauthorized fee change
         unauthorized_address, _ = self.gen_random_address_with_key()
-        context = self.create_context(address=Address(unauthorized_address))
+        context = self.create_context(caller_id=Address(unauthorized_address))
         with self.assertNCFail('NotAuthorized'):
             self.runner.call_public_method(self.nc_id, 'change_fee', context, 300)
 
         # Test dev address change
         new_dev_address, _ = self.gen_random_address_with_key()
-        context = self.create_context(address=Address(self.dev_address))
+        context = self.create_context(caller_id=Address(self.dev_address))
         self.runner.call_public_method(self.nc_id, 'change_dev_address', context, new_dev_address)
-        self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_dev_address'), new_dev_address.hex())
+        self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_dev_address'), get_address_b58_from_bytes(new_dev_address))
 
     def test_dev_config_changes(self):
         """Test dev-only configuration changes."""
@@ -355,10 +355,10 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         
         # Unauthorized user
         unauthorized_address, _ = self.gen_random_address_with_key()
-        unauthorized_context = self.create_context(address=Address(unauthorized_address))
+        unauthorized_context = self.create_context(caller_id=Address(unauthorized_address))
         
         # Authorized dev user
-        dev_context = self.create_context(address=Address(self.dev_address))
+        dev_context = self.create_context(caller_id=Address(self.dev_address))
 
         # Test change_fee_multiplier
         with self.assertNCFail('NotAuthorized'):
@@ -401,14 +401,14 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         # Withdraw the NFT first to test deposit
         context = self.create_context(
             actions=[NCWithdrawalAction(token_uid=token_uid, amount=1)],
-            address=Address(owner_address)
+            caller_id=Address(owner_address)
         )
         self.runner.call_public_method(self.nc_id, 'withdraw_nft', context, name)
         
         # Test NFT deposit
         context = self.create_context(
             actions=[NCDepositAction(token_uid=token_uid, amount=1)],
-            address=Address(owner_address)
+            caller_id=Address(owner_address)
         )
         self.runner.call_public_method(self.nc_id, 'deposit_nft', context, name)
         
@@ -419,7 +419,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         # Test wrong amount deposit
         context = self.create_context(
             actions=[NCDepositAction(token_uid=token_uid, amount=2)],
-            address=Address(owner_address)
+            caller_id=Address(owner_address)
         )
         with self.assertNCFail('InvalidAmount'):
             self.runner.call_public_method(self.nc_id, 'deposit_nft', context, name)
@@ -427,7 +427,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         # Test NFT withdrawal
         context = self.create_context(
             actions=[NCWithdrawalAction(token_uid=token_uid, amount=1)],
-            address=Address(owner_address)
+            caller_id=Address(owner_address)
         )
         self.runner.call_public_method(self.nc_id, 'withdraw_nft', context, name)
         
@@ -439,7 +439,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         unauthorized_address, _ = self.gen_random_address_with_key()
         context = self.create_context(
             actions=[NCWithdrawalAction(token_uid=token_uid, amount=1)],
-            address=Address(unauthorized_address)
+            caller_id=Address(unauthorized_address)
         )
         with self.assertNCFail('NotAuthorized'):
             self.runner.call_public_method(self.nc_id, 'withdraw_nft', context, name)
@@ -461,7 +461,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         two_years_fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', name) * 2
         context = self.create_context(
             actions=[NCDepositAction(token_uid=self.token_uid, amount=two_years_fee)],
-            address=Address(owner_address)
+            caller_id=Address(owner_address)
         )
         self.runner.call_public_method(self.nc_id, 'renew_name', context, name)
         new_expiration_info = self.runner.call_view_method(self.nc_id, 'get_name_expiration_info', name, self.get_current_timestamp())
@@ -475,7 +475,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         # Test renewal during grace period
         context = self.create_context(
             actions=[NCDepositAction(token_uid=self.token_uid, amount=fee)],
-            address=Address(owner_address)
+            caller_id=Address(owner_address)
         )
         self.runner.call_public_method(self.nc_id, 'renew_name', context, name)
         
@@ -497,7 +497,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         wrong_token = b'wrong_token'
         fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', "testname")
         action = NCDepositAction(token_uid=wrong_token, amount=fee)
-        context = self.create_context(actions=[action], address=Address(address_bytes))
+        context = self.create_context(actions=[action], caller_id=Address(address_bytes))
         
         with self.assertNCFail('InvalidToken'):
             self.runner.call_public_method(self.nc_id, 'create_name', context, "testname", "TEST")
@@ -511,15 +511,15 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
 
         # get_name_data
         name_data = self.runner.call_view_method(self.nc_id, 'get_name_data', name)
-        self.assertEqual(name_data['owner_address'], owner_address.hex())
-        self.assertEqual(name_data['resolving_address'], owner_address.hex())
+        self.assertEqual(name_data['owner_address'], get_address_b58_from_bytes(owner_address))
+        self.assertEqual(name_data['resolving_address'], get_address_b58_from_bytes(owner_address))
 
         # get_name_expiration_date
         expiration_date = self.runner.call_view_method(self.nc_id, 'get_name_expiration_date', name)
         self.assertGreater(int(expiration_date), self.get_current_timestamp())
 
         # get_dev_address & get_contract_domain
-        self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_dev_address'), self.dev_address.hex())
+        self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_dev_address'), get_address_b58_from_bytes(self.dev_address))
         self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_contract_domain'), "htr")
 
         # check_name_ownership
@@ -548,7 +548,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
             address_bytes = address
             
         action = NCDepositAction(token_uid=self.token_uid, amount=amount)
-        context = self.create_context(actions=[action], address=Address(address_bytes))
+        context = self.create_context(actions=[action], caller_id=Address(address_bytes), timestamp=self.get_current_timestamp())
         self.runner.call_public_method(self.nc_id, 'create_name', context, name, token_symbol)
         
         if return_key:

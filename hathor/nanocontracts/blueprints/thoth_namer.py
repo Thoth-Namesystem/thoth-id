@@ -1,8 +1,8 @@
 from typing import NamedTuple
-from hathor.nanocontracts.blueprint import Blueprint
-from hathor.nanocontracts.context import Context
-from hathor.nanocontracts.exception import NCFail
-from hathor.nanocontracts.types import (
+from hathor import (
+    Blueprint,
+    Context,
+    NCFail,
     Address,
     Amount,
     NCAction,
@@ -922,17 +922,20 @@ class ThothNamer(Blueprint):
     def _remove_name_from_manager(self, manager_address: Address, name: str) -> None:
         """Remove a name from a manager's list of managed names."""
         if manager_address in self.manager_names:
-            names_list = self.manager_names[manager_address]
+            names_list = list(self.manager_names[manager_address])
             if name in names_list:
                 names_list.remove(name)
+                self.manager_names.update({manager_address: names_list})
 
-            if self.manager_primary_name.get(manager_address) == name and not names_list:
-                del self.manager_primary_name[manager_address]
-
-            # Clean up empty lists
             if not names_list:
                 del self.manager_names[manager_address]
-                
+                if self.manager_primary_name.get(manager_address) == name:
+                    del self.manager_primary_name[manager_address]
+            else:
+                # If the removed name was the primary, set a new primary.
+                if self.manager_primary_name.get(manager_address) == name:
+                    self._set_manager_primary_name(manager_address, names_list[0])
+
     def _update_name_manager(self, name: str, old_manager: Address, new_manager: Address) -> None:
         """Update manager mappings when a name's manager changes."""
         self._remove_name_from_manager(old_manager, name)
