@@ -1,6 +1,7 @@
 from typing import NamedTuple
 from hathor import (
     Blueprint,
+    BlueprintId,
     Context,
     NCFail,
     Address,
@@ -10,7 +11,8 @@ from hathor import (
     TokenUid,
     Timestamp,
     public,
-    view
+    view,
+    export
 )
 
 HTR_UID = b'\x00'
@@ -116,7 +118,7 @@ class NameRecord(NamedTuple):
     def remove_data(self, key: str) -> 'NameRecord':
         """Create a new NameRecord with a data key removed."""
         new_data = dict(self.data)  # Create a copy of the current data
-        if key in new_data:
+        if new_data.get(key) is not None:
             del new_data[key]
         return NameRecord(
             token_uid=self.token_uid,
@@ -128,7 +130,7 @@ class NameRecord(NamedTuple):
             data=new_data
         )
 
-
+@export
 class ThothNamer(Blueprint):
     """A name service blueprint for registering and managing domain names using NFTs."""
 
@@ -147,6 +149,7 @@ class ThothNamer(Blueprint):
     max_token_symbol_length: int # Maximum length for token symbols
     max_total_profile_size: int # Maximum total size of all profile data in bytes
     grace_period_days: int # Grace period after expiration before name becomes available
+    contract_version: str # Contract version
 
     @public
     def initialize(self, 
@@ -193,7 +196,7 @@ class ThothNamer(Blueprint):
         if not self.validate_name(name):
             raise InvalidNameFormat
 
-        if name in self.registered_names:
+        if self.registered_names.get(name) is not None:
             # Name exists, check if it can be re-registered
             if self.is_name_available(name, ctx.block.timestamp):
                 # It's expired and past grace period, so clean up before re-registering
@@ -252,13 +255,13 @@ class ThothNamer(Blueprint):
         """
         if not self.validate_name(name):
             raise InvalidNameFormat
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:   
             raise NameNotFound
             
         record = self.registered_names[name]
-        
         # Check if key exists
-        if key not in record.data:
+        
+        if record.data.get(key) is None:
             raise InvalidDataKey('Key does not exist in profile data')
             
         # Authorization check
@@ -281,7 +284,7 @@ class ThothNamer(Blueprint):
         """
         if not self.validate_name(name):
             raise InvalidNameFormat
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             raise NameNotFound
 
         # Validate key format and total size
@@ -289,7 +292,7 @@ class ThothNamer(Blueprint):
         
         record = self.registered_names[name]
         # Validate total number of keys
-        if len(record.data) >= self.max_profile_data_entries and key not in record.data:
+        if len(record.data) >= self.max_profile_data_entries and record.data.get(key) is None:
             raise TooManyDataKeys(f'Maximum of {self.max_profile_data_entries} profile data keys allowed')
         
         # Authorization check
@@ -301,7 +304,7 @@ class ThothNamer(Blueprint):
     @public(allow_actions=False)
     def change_name_owner(self, ctx: Context, name: str, new_owner_address: Address) -> None:
         """Change the owner address of a name."""
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             raise NameNotFound
 
         record = self.registered_names[name]
@@ -325,6 +328,8 @@ class ThothNamer(Blueprint):
         1. The NFT owner (when NFT is deposited)
         2. The current manager (no deposit needed)
         """
+        if self.registered_names.get(name) is None:
+            raise NameNotFound
         record = self.registered_names[name]
         
         # Check authorization
@@ -346,7 +351,7 @@ class ThothNamer(Blueprint):
     @public(allow_actions=False)
     def change_manager_primary_name(self, ctx: Context, name: str) -> None:
         """Change the primary name for a manager."""
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             raise NameNotFound
         record = self.registered_names[name]
         if record.manager_address != ctx.caller_id:
@@ -362,6 +367,8 @@ class ThothNamer(Blueprint):
         
         Only the manager can change the resolving address.
         """
+        if self.registered_names.get(name) is None:
+            raise NameNotFound  
         record = self.registered_names[name]
         if record.manager_address != ctx.caller_id:
             raise NotAuthorized('Only the manager can change the resolving address')
@@ -371,7 +378,7 @@ class ThothNamer(Blueprint):
     @public(allow_deposit=True, allow_withdrawal=False)
     def deposit_nft(self, ctx: Context, name: str) -> None:
         """Deposit NFT to enable name management."""
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             raise NameNotFound
 
         record = self.registered_names[name]
@@ -384,7 +391,7 @@ class ThothNamer(Blueprint):
     @public(allow_deposit=False, allow_withdrawal=True)
     def withdraw_nft(self, ctx: Context, name: str) -> None:
         """Withdraw NFT to enable transfer."""
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             raise NameNotFound
 
         record = self.registered_names[name]
@@ -402,7 +409,7 @@ class ThothNamer(Blueprint):
     @public(allow_deposit=True, allow_withdrawal=False)
     def renew_name(self, ctx: Context, name: str) -> None:
         """Renew a name registration for another period."""
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             raise NameNotFound
 
         record = self.registered_names[name]
@@ -443,7 +450,7 @@ class ThothNamer(Blueprint):
             The multiplier of length 5 will be used for all other lengths.
         """
         self._only_dev(ctx)
-        if length not in self.fee_multiplier:
+        if self.fee_multiplier.get(length) is None:
             raise InvalidLength('Length not found in fee multiplier. Must be 3, 4 or 5. \
                                 Length 5 will be used for all other lengths.')
         if new_multiplier <= 0:
@@ -498,6 +505,30 @@ class ThothNamer(Blueprint):
             raise InvalidGracePeriodDays('Grace period days must be a positive value.')
         self.grace_period_days = new_grace_period_days
 
+    @public
+    def upgrade_contract(self, ctx: Context, new_blueprint_id: BlueprintId, new_version: str) -> None:
+        """Upgrade the contract to a new blueprint version.
+
+        Args:
+            ctx: Transaction context
+            new_blueprint_id: The blueprint ID to upgrade to
+            new_version: Version string for the new blueprint (e.g., "1.1.0")
+
+        Raises:
+            Unauthorized: If caller is not the owner
+            InvalidVersion: If new version is not higher than current version
+        """
+        # Only owner can upgrade
+        self._only_dev(ctx)
+
+        # Validate version is newer
+        if not self._is_version_higher(new_version, self.contract_version):
+            raise InvalidVersion(f"New version {new_version} must be higher than current {self.contract_version}")
+        self.contract_version = new_version
+        
+        # Perform the upgrade
+        self.syscall.change_blueprint(new_blueprint_id)
+
     @view
     def is_name_available(self, name: str, now_timestamp: Timestamp) -> bool:
         """Check if a name is available for registration.
@@ -510,7 +541,7 @@ class ThothNamer(Blueprint):
             name: The name to check
             now_timestamp: The current timestamp to check against
         """
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             return True
             
         record = self.registered_names[name]
@@ -529,7 +560,7 @@ class ThothNamer(Blueprint):
     @view
     def get_name_data(self, name: str) -> dict[str, str]:
         """Get all data associated with a name in a JSON-serializable format."""
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             raise NameNotFound
 
         record = self.registered_names[name]
@@ -538,7 +569,7 @@ class ThothNamer(Blueprint):
     @view
     def get_name_owner(self, name: str) -> str:
         """Get the name owner's address."""
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             raise NameNotFound
 
         record = self.registered_names[name]
@@ -562,7 +593,7 @@ class ThothNamer(Blueprint):
         - grace_period_end: The grace period end date in seconds (timestamp)
         - status: Current status (active, grace_period, or available)
         """
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             raise NameNotFound
 
         record = self.registered_names[name]
@@ -586,7 +617,7 @@ class ThothNamer(Blueprint):
     @view
     def get_name_expiration_date(self, name: str) -> Timestamp:
         """Get the expiration date of a name registration."""
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             raise NameNotFound
 
         record = self.registered_names[name]
@@ -681,7 +712,7 @@ class ThothNamer(Blueprint):
         Returns:
             bool: True if the address owns the name, False otherwise
         """
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             return False
             
         record = self.registered_names[name]
@@ -706,7 +737,7 @@ class ThothNamer(Blueprint):
         Returns:
             str: 'active', 'expired', or 'available'
         """
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             return 'available'
             
         record = self.registered_names[name]
@@ -734,7 +765,7 @@ class ThothNamer(Blueprint):
             
         length = len(name)
         multiplier = self.fee_multiplier[5]  # Default multiplier
-        if length in self.fee_multiplier:
+        if self.fee_multiplier.get(length) is not None:
             multiplier = self.fee_multiplier[length]
             
         return {
@@ -751,10 +782,11 @@ class ThothNamer(Blueprint):
     @view
     def get_fee_multiplier(self, length: int) -> int:
         """Get the fee multiplier for a given length."""
-        if length not in self.fee_multiplier:
-            raise InvalidLength('Length not found in fee multiplier. Must be 3, 4 or 5. \
-                                Length 5 will be used for all other lengths.')
-        return self.fee_multiplier[length]
+        if length > 5:
+            length = 5
+        elif length < 3:
+            raise InvalidLength('Length must be at least 3 characters.')
+        return self.fee_multiplier.get(length, 1)
         
     @view
     def get_manager_names(self, manager_address: Address) -> list[str]:
@@ -764,12 +796,9 @@ class ThothNamer(Blueprint):
             manager_address: The address to check
             
         Returns:
-            list[str]: List of names managed by this address (empty if none)
+            list[str]: List of names managed by this address
         """
-        names = self.manager_names.get(manager_address)
-        if names is None:
-            return []
-        return list(names)
+        return list(self.manager_names.get(manager_address, []))
     
     @view
     def get_manager_primary_name(self, manager_address: Address) -> str:
@@ -823,6 +852,15 @@ class ThothNamer(Blueprint):
         """Get the grace period days."""
         return self.grace_period_days
 
+    @view
+    def get_contract_version(self) -> str:
+        """Get the current contract version.
+
+        Returns:
+            Version string (e.g., "1.0.0")
+        """
+        return self.contract_version
+
     def _only_dev(self, ctx: Context) -> None:
         """Check if the caller is the developer."""
         if ctx.caller_id != self.dev_address:
@@ -856,7 +894,7 @@ class ThothNamer(Blueprint):
 
     def _get_nft_owner(self, name: str) -> Address:
         """Get the current owner of an NFT by looking up to what is on the owner_address at the name record."""
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             raise NameNotFound
 
         return self.registered_names[name].owner_address
@@ -903,7 +941,7 @@ class ThothNamer(Blueprint):
             name: The name to check
             now_timestamp: The current timestamp to check against
         """
-        if name not in self.registered_names:
+        if self.registered_names.get(name) is None:
             raise NameNotFound
 
         record = self.registered_names[name]
@@ -913,7 +951,7 @@ class ThothNamer(Blueprint):
     
     def _add_name_to_manager(self, manager_address: Address, name: str) -> None:
         """Add a name to a manager's list of managed names."""
-        if manager_address not in self.manager_names:
+        if self.manager_names.get(manager_address) is None:
             self.manager_names[manager_address] = []
         names = self.manager_names[manager_address]
         if name not in names:
@@ -921,20 +959,22 @@ class ThothNamer(Blueprint):
             
     def _remove_name_from_manager(self, manager_address: Address, name: str) -> None:
         """Remove a name from a manager's list of managed names."""
-        if manager_address in self.manager_names:
-            names_list = list(self.manager_names[manager_address])
-            if name in names_list:
-                names_list.remove(name)
-                self.manager_names.update({manager_address: names_list})
-
-            if not names_list:
+        if self.manager_names.get(manager_address) is not None:
+            names = list(self.manager_names[manager_address])
+            if name in names:
+                names.remove(name)
+                for _ in range(len(names)+1):
+                    self.manager_names[manager_address].pop()
                 del self.manager_names[manager_address]
-                if self.manager_primary_name.get(manager_address) == name:
-                    del self.manager_primary_name[manager_address]
+                self.manager_names.update({manager_address: names})
+
+            if not names:
+                del self.manager_names[manager_address]
+                del self.manager_primary_name[manager_address]
             else:
                 # If the removed name was the primary, set a new primary.
                 if self.manager_primary_name.get(manager_address) == name:
-                    self._set_manager_primary_name(manager_address, names_list[0])
+                    self._set_manager_primary_name(manager_address, '')
 
     def _update_name_manager(self, name: str, old_manager: Address, new_manager: Address) -> None:
         """Update manager mappings when a name's manager changes."""
@@ -956,13 +996,52 @@ class ThothNamer(Blueprint):
 
     def _check_manager_has_only_one_name(self, manager_address: Address) -> bool:
         """Check if a manager has any names."""
-        if manager_address not in self.manager_names:
+        if self.manager_names.get(manager_address) is None:
             return False
         return len(self.manager_names[manager_address]) == 1
 
     def _set_manager_primary_name(self, manager_address: Address, name: str) -> None:
         """Set the primary name for a manager."""
-        self.manager_primary_name.update({manager_address: name})
+        if name:
+            self.manager_primary_name.update({manager_address: name})
+        elif self.manager_primary_name.get(manager_address) is not None:
+            del self.manager_primary_name[manager_address]
+
+    def _is_version_higher(self, new_version: str, current_version: str) -> bool:
+        """Compare semantic versions (e.g., "1.2.3").
+
+        Returns True if new_version > current_version.
+        Returns False if versions are malformed or equal.
+        """
+        # Split versions by '.'
+        new_parts_str = new_version.split('.')
+        current_parts_str = current_version.split('.')
+        
+        # Check if all parts are valid integers
+        new_parts: list[int] = []
+        for part in new_parts_str:
+            # Simple check: all characters must be digits
+            if not part or not all(c in '0123456789' for c in part):
+                return False  # Invalid format
+            new_parts.append(int(part))
+        
+        current_parts: list[int] = []
+        for part in current_parts_str:
+            if not part or not all(c in '0123456789' for c in part):
+                return False  # Invalid format
+            current_parts.append(int(part))
+
+        # Pad shorter version with zeros
+        max_len = len(new_parts) if len(new_parts) > len(current_parts) else len(current_parts)
+        while len(new_parts) < max_len:
+            new_parts.append(0)
+        while len(current_parts) < max_len:
+            current_parts.append(0)
+
+        # Compare versions
+        return new_parts > current_parts
+
+    
 
 class NameNotFound(NCFail):
     """Raised when attempting to access a name that is not registered in the system.
@@ -1168,5 +1247,6 @@ class NotDeposited(NCFail):
     """Raised when attempting to perform an operation on a token that is not deposited."""
     pass
 
-
-__blueprint__ = ThothNamer
+class InvalidVersion(NCFail):
+    """Raised when an invalid version is provided."""
+    pass
