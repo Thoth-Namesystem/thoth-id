@@ -226,7 +226,7 @@ class ThothNamer(Blueprint):
         expiration_date = ctx.block.timestamp + years_of_access * SECONDS_PER_YEAR
 
         # Mint new NFT and create name record
-        token_uid = self._mint_name_nft(name, token_symbol)
+        token_uid = self._mint_name_nft(name, token_symbol, ctx.block.timestamp)
         
         self.registered_names.update({name: NameRecord(
             token_uid=token_uid,
@@ -901,7 +901,7 @@ class ThothNamer(Blueprint):
         if ctx.caller_id != self.dev_address:
             raise NotAuthorized
 
-    def _mint_name_nft(self, name: str, token_symbol: str) -> TokenUid:
+    def _mint_name_nft(self, name: str, token_symbol: str, timestamp: Timestamp) -> TokenUid:
         """Mint a new NFT for the name and return its UID."""
         # Create NFT metadata
         nft_name = f'{name[:26]}.{self.domain}'
@@ -911,7 +911,8 @@ class ThothNamer(Blueprint):
             token_symbol=token_symbol,
             amount=1,
             melt_authority=True,
-            mint_authority=True
+            mint_authority=True,
+            salt=bytes(timestamp)
         )
         
         # Return the token UID
