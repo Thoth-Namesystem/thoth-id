@@ -21,8 +21,8 @@ HTR_UID = b'\x00'
 SECONDS_PER_YEAR = 365 * 24 * 60 * 60
 SECONDS_PER_DAY = 24 * 60 * 60
 
-
 # Default configuration values
+DEFAULT_MAX_MANAGED_NAMES = 100
 DEFAULT_MAX_PROFILE_DATA_ENTRIES = 20
 DEFAULT_MAX_PROFILE_KEY_LENGTH = 50
 DEFAULT_MAX_PROFILE_VALUE_LENGTH = 200
@@ -149,6 +149,7 @@ class ThothNamer(Blueprint):
     max_token_symbol_length: int # Maximum length for token symbols
     max_total_profile_size: int # Maximum total size of all profile data in bytes
     grace_period_days: int # Grace period after expiration before name becomes available
+    max_managed_names: int # Maximum number of names a single address can manage
     contract_version: str # Contract version
 
     @public
@@ -161,7 +162,8 @@ class ThothNamer(Blueprint):
                    max_profile_value_length: int,
                    max_token_symbol_length: int,
                    max_total_profile_size: int,
-                   grace_period_days: int) -> None:
+                   grace_period_days: int,
+                   max_managed_names: int) -> None:
         """Initialize the name service with a base domain and registration fee."""
         if not domain:
             raise InvalidDomain('Domain cannot be empty.')
@@ -185,6 +187,7 @@ class ThothNamer(Blueprint):
         self.max_token_symbol_length = max_token_symbol_length
         self.max_total_profile_size = max_total_profile_size
         self.grace_period_days = grace_period_days
+        self.max_managed_names = max_managed_names
 
         self.registered_names: dict[str, NameRecord]  = {}
         self.manager_names: dict[Address, list[str]]  = {}
@@ -504,6 +507,28 @@ class ThothNamer(Blueprint):
         if new_grace_period_days <= 0:
             raise InvalidGracePeriodDays('Grace period days must be a positive value.')
         self.grace_period_days = new_grace_period_days
+
+    @public(allow_actions=False)
+    def change_max_managed_names(self, ctx: Context, new_max_managed_names: int) -> None:
+        """Change the maximum number of names a single address can manage.
+        
+        The limit can only be increased, never decreased. This prevents existing
+        managers from being locked out of their names if the limit is changed.
+        
+        Args:
+            ctx: Transaction context
+            new_max_managed_names: New maximum limit (must be higher than current)
+            
+        Raises:
+            InvalidMaxManagedNames: If new limit is not positive
+            CannotDecreaseLimit: If new limit is lower than current limit
+        """
+        self._only_dev(ctx)
+        if new_max_managed_names <= 0:
+            raise InvalidMaxManagedNames('Maximum number of managed names must be a positive value.')
+        if new_max_managed_names < self.max_managed_names:
+            raise CannotDecreaseLimit(f'Cannot decrease limit from {self.max_managed_names} to {new_max_managed_names}. The limit can only be increased.')
+        self.max_managed_names = new_max_managed_names
 
     @public
     def upgrade_contract(self, ctx: Context, new_blueprint_id: BlueprintId, new_version: str) -> None:
@@ -861,6 +886,15 @@ class ThothNamer(Blueprint):
         """
         return self.contract_version
 
+    @view
+    def get_max_managed_names(self) -> int:
+        """Get the maximum number of names a single address can manage.
+
+        Returns:
+            Maximum number of managed names allowed per address
+        """
+        return self.max_managed_names
+
     def _only_dev(self, ctx: Context) -> None:
         """Check if the caller is the developer."""
         if ctx.caller_id != self.dev_address:
@@ -950,10 +984,19 @@ class ThothNamer(Blueprint):
             raise NameExpired('Name registration has expired')
     
     def _add_name_to_manager(self, manager_address: Address, name: str) -> None:
-        """Add a name to a manager's list of managed names."""
+        """Add a name to a manager's list of managed names.
+        
+        Raises:
+            MaxManagedNamesExceeded: If the manager already has MAX_MANAGED_NAMES names
+        """
         if self.manager_names.get(manager_address) is None:
             self.manager_names[manager_address] = []
         names = self.manager_names[manager_address]
+        
+        # Check if manager has reached the limit before adding a new name
+        if name not in names and len(names) >= self.max_managed_names:
+            raise MaxManagedNamesExceeded(f'Manager address has reached the maximum limit of {self.max_managed_names} managed names')
+        
         if name not in names:
             names.append(name)
             
@@ -1249,4 +1292,24 @@ class NotDeposited(NCFail):
 
 class InvalidVersion(NCFail):
     """Raised when an invalid version is provided."""
+    pass
+
+class MaxManagedNamesExceeded(NCFail):
+    """Raised when attempting to add a name to a manager that has reached the maximum limit.
+    
+    Each address can manage up to max_managed_names names. This prevents
+    excessive resource usage and ensures fair distribution of names.
+    """
+    pass
+
+class InvalidMaxManagedNames(NCFail):
+    """Raised when an invalid maximum number of managed names is provided."""
+    pass
+
+class CannotDecreaseLimit(NCFail):
+    """Raised when attempting to decrease the max_managed_names limit.
+    
+    The limit can only be increased to prevent existing managers from being
+    locked out of their names.
+    """
     pass
