@@ -13,7 +13,8 @@ from hathor.nanocontracts.blueprints.thoth_namer import (
     DEFAULT_MAX_PROFILE_VALUE_LENGTH,
     DEFAULT_MAX_TOKEN_SYMBOL_LENGTH,
     DEFAULT_MAX_TOTAL_PROFILE_SIZE,
-    DEFAULT_GRACE_PERIOD_DAYS
+    DEFAULT_GRACE_PERIOD_DAYS,
+    DEFAULT_MAX_MANAGED_NAMES
 )
 
 settings = HathorSettings()
@@ -38,6 +39,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         self.max_token_symbol_length = DEFAULT_MAX_TOKEN_SYMBOL_LENGTH
         self.max_total_profile_size = DEFAULT_MAX_TOTAL_PROFILE_SIZE
         self.grace_period_days = DEFAULT_GRACE_PERIOD_DAYS
+        self.max_managed_names = DEFAULT_MAX_MANAGED_NAMES
 
     def get_current_timestamp(self):
         return int(self.clock.seconds())
@@ -52,6 +54,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
             "max_token_symbol_length": self.max_token_symbol_length,
             "max_total_profile_size": self.max_total_profile_size,
             "grace_period_days": self.grace_period_days,
+            "max_managed_names": self.max_managed_names,
         }
         init_args.update(kwargs)
 
@@ -68,6 +71,7 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
             init_args['max_token_symbol_length'],
             init_args['max_total_profile_size'],
             init_args['grace_period_days'],
+            init_args['max_managed_names'],
         )
 
         self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_contract_domain'), init_args["domain"])
@@ -112,14 +116,16 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
             self.runner.create_contract(self.gen_random_contract_id(), self.blueprint_id, context, "", 100,
                                         self.max_profile_data_entries, self.max_profile_key_length,
                                         self.max_profile_value_length, self.max_token_symbol_length,
-                                        self.max_total_profile_size, self.grace_period_days)
+                                        self.max_total_profile_size, self.grace_period_days,
+                                        self.max_managed_names)
 
         # Test invalid fee
         with self.assertNCFail('InvalidFee'):
             self.runner.create_contract(self.gen_random_contract_id(), self.blueprint_id, context, "htr", 0,
                                         self.max_profile_data_entries, self.max_profile_key_length,
                                         self.max_profile_value_length, self.max_token_symbol_length,
-                                        self.max_total_profile_size, self.grace_period_days)
+                                        self.max_total_profile_size, self.grace_period_days,
+                                        self.max_managed_names)
 
         # Test initialization with custom config
         custom_config = {
@@ -384,6 +390,100 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         self.runner.call_public_method(self.nc_id, 'change_grace_period_days', dev_context, 15)
         self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_grace_period_days'), 15)
 
+        # Test change_max_managed_names - can only increase
+        with self.assertNCFail('NotAuthorized'):
+            self.runner.call_public_method(self.nc_id, 'change_max_managed_names', unauthorized_context, 150)
+        with self.assertNCFail('InvalidMaxManagedNames'):
+            self.runner.call_public_method(self.nc_id, 'change_max_managed_names', dev_context, 0)
+        with self.assertNCFail('CannotDecreaseLimit'):
+            self.runner.call_public_method(self.nc_id, 'change_max_managed_names', dev_context, 50)
+        # Increasing should work
+        self.runner.call_public_method(self.nc_id, 'change_max_managed_names', dev_context, 150)
+        self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_max_managed_names'), 150)
+
+    def test_max_managed_names_limit(self):
+        """Test that the max_managed_names limit is enforced."""
+        # Initialize with a low limit for easier testing
+        self.initialize_contract(max_managed_names=3)
+        
+        manager_address, _ = self.gen_random_address_with_key()
+        fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', "test-name")
+        
+        # Register 3 names successfully
+        for i in range(3):
+            name = f"name{i}"
+            self._register_name(name, fee, address=manager_address, token_symbol=f"N{i}")
+        
+        # Verify we have 3 names
+        managed_names = self.runner.call_view_method(self.nc_id, 'get_manager_names', manager_address)
+        self.assertEqual(len(managed_names), 3)
+        
+        # Try to register a 4th name - should fail
+        with self.assertNCFail('MaxManagedNamesExceeded'):
+            self._register_name("name3", fee, address=manager_address, token_symbol="N3")
+        
+        # Verify limit is returned correctly
+        self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_max_managed_names'), 3)
+
+    def test_max_managed_names_on_manager_change(self):
+        """Test that max_managed_names is enforced when changing managers."""
+        # Initialize with a low limit
+        self.initialize_contract(max_managed_names=2)
+        
+        # Create two managers
+        manager1_address, _ = self.gen_random_address_with_key()
+        manager2_address, _ = self.gen_random_address_with_key()
+        
+        fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', "test-name")
+        
+        # Manager1 registers 1 name
+        name1 = "name1"
+        self._register_name(name1, fee, address=manager1_address, token_symbol="N1")
+        
+        # Manager2 registers 2 names (hits limit)
+        for i in range(2):
+            name = f"name{i+2}"
+            self._register_name(name, fee, address=manager2_address, token_symbol=f"N{i+2}")
+        
+        # Try to transfer name1 from manager1 to manager2 (who is at limit) - should fail
+        context = self.create_context(caller_id=Address(manager1_address))
+        with self.assertNCFail('MaxManagedNamesExceeded'):
+            self.runner.call_public_method(self.nc_id, 'change_manager_address', context, name1, manager2_address)
+        
+        # Verify manager1 still has name1
+        self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_manager_names', manager1_address), [name1])
+        self.assertEqual(len(self.runner.call_view_method(self.nc_id, 'get_manager_names', manager2_address)), 2)
+
+    def test_max_managed_names_increase(self):
+        """Test that increasing max_managed_names allows more names to be registered."""
+        # Initialize with limit of 2
+        self.initialize_contract(max_managed_names=2)
+        
+        manager_address, _ = self.gen_random_address_with_key()
+        fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', "test-name")
+        
+        # Register 2 names (at limit)
+        for i in range(2):
+            name = f"name{i}"
+            self._register_name(name, fee, address=manager_address, token_symbol=f"N{i}")
+        
+        # Verify we're at the limit
+        managed_names = self.runner.call_view_method(self.nc_id, 'get_manager_names', manager_address)
+        self.assertEqual(len(managed_names), 2)
+        
+        # Increase limit to 5
+        dev_context = self.create_context(caller_id=Address(self.dev_address))
+        self.runner.call_public_method(self.nc_id, 'change_max_managed_names', dev_context, 5)
+        self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_max_managed_names'), 5)
+        
+        # Now register 3 more names successfully
+        for i in range(2, 5):
+            name = f"name{i}"
+            self._register_name(name, fee, address=manager_address, token_symbol=f"N{i}")
+        
+        # Verify we have 5 names
+        managed_names = self.runner.call_view_method(self.nc_id, 'get_manager_names', manager_address)
+        self.assertEqual(len(managed_names), 5)
 
     def test_nft_operations_edge_cases(self):
         """Test edge cases for NFT deposit and withdrawal operations."""
