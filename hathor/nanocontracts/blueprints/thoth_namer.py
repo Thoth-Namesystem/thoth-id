@@ -188,6 +188,7 @@ class ThothNamer(Blueprint):
         self.max_total_profile_size = max_total_profile_size
         self.grace_period_days = grace_period_days
         self.max_managed_names = max_managed_names
+        self.contract_version = "1.0.0"
 
         self.registered_names: dict[str, NameRecord]  = {}
         self.manager_names: dict[Address, list[str]]  = {}
