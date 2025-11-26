@@ -4,7 +4,7 @@ from hathor.conf import HathorSettings
 from hathor.crypto.util import decode_address, get_address_b58_from_bytes
 from hathor.nanocontracts.types import Address, NCDepositAction, NCWithdrawalAction
 from hathor.wallet import KeyPair
-from tests.nanocontracts.blueprints.unittest import BlueprintTestCase
+from hathor_tests.nanocontracts.blueprints.unittest import BlueprintTestCase
 
 from hathor.nanocontracts.blueprints.thoth_namer import (
     ThothNamer,
