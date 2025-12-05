@@ -42,11 +42,13 @@ from hathor.p2p.utils import discover_hostname, get_genesis_short_hash
 from hathor.pubsub import PubSubManager
 from hathor.reactor import ReactorProtocol as Reactor
 from hathor.stratum import StratumFactory
+from hathor.transaction.vertex_children import RocksDBVertexChildrenService
 from hathor.transaction.vertex_parser import VertexParser
 from hathor.util import Random
 from hathor.verification.verification_service import VerificationService
 from hathor.verification.vertex_verifiers import VertexVerifiers
 from hathor.vertex_handler import VertexHandler
+from hathor.transaction.json_serializer import VertexJsonSerializer
 from hathor.wallet import BaseWallet, HDWallet, Wallet
 
 logger = get_logger()
@@ -135,6 +137,7 @@ class CliBuilder:
 
         # Initialize indexes manager.
         indexes = RocksDBIndexesManager(self.rocksdb_storage, settings=settings)
+        vertex_children_service = RocksDBVertexChildrenService(self.rocksdb_storage)
 
         kwargs: dict[str, Any] = {}
         if self._args.disable_cache:
@@ -146,6 +149,7 @@ class CliBuilder:
             settings=settings,
             vertex_parser=vertex_parser,
             nc_storage_factory=self.nc_storage_factory,
+            vertex_children_service=vertex_children_service,
             **kwargs
         )
         event_storage = EventRocksDBStorage(self.rocksdb_storage)
@@ -167,6 +171,7 @@ class CliBuilder:
                 indexes=indexes,
                 settings=settings,
                 nc_storage_factory=self.nc_storage_factory,
+                vertex_children_service=vertex_children_service,
             )
             tx_storage.capacity = self._args.cache_size if self._args.cache_size is not None else DEFAULT_CACHE_SIZE
             if self._args.cache_interval:
@@ -325,6 +330,8 @@ class CliBuilder:
 
         SyncSupportLevel.add_factories(settings, p2p_manager, SyncSupportLevel.ENABLED, vertex_parser, vertex_handler)
 
+        vertex_json_serializer = VertexJsonSerializer(storage=tx_storage, nc_log_storage=nc_log_storage)
+
         from hathor.consensus.poa import PoaBlockProducer, PoaSignerFile
         poa_block_producer: PoaBlockProducer | None = None
         if settings.CONSENSUS_ALGORITHM.is_poa():
@@ -361,6 +368,7 @@ class CliBuilder:
             poa_block_producer=poa_block_producer,
             runner_factory=runner_factory,
             feature_service=self.feature_service,
+            vertex_json_serializer=vertex_json_serializer,
         )
 
         if self._args.x_ipython_kernel:
