@@ -39,7 +39,6 @@ class NameRecord(NamedTuple):
     manager_address: Address
     resolving_address: Address
     expiration_date: Timestamp  # Stored as timestamp
-    data: dict[str, str]  # Additional profile data
 
     def update_owner_address(self, new_owner_address: Address) -> 'NameRecord':
         """Create a new NameRecord with updated owner_address."""
@@ -49,8 +48,7 @@ class NameRecord(NamedTuple):
             is_deposited=self.is_deposited,
             manager_address=self.manager_address,
             resolving_address=self.resolving_address,
-            expiration_date=self.expiration_date,
-            data=self.data
+            expiration_date=self.expiration_date
         )
 
     def update_resolving_address(self, new_resolving_address: Address) -> 'NameRecord':
@@ -61,8 +59,7 @@ class NameRecord(NamedTuple):
             is_deposited=self.is_deposited,
             manager_address=self.manager_address,
             resolving_address=new_resolving_address,
-            expiration_date=self.expiration_date,
-            data=self.data
+            expiration_date=self.expiration_date
         )
 
     def update_expiration_date(self, new_expiration_date: Timestamp) -> 'NameRecord':
@@ -73,8 +70,7 @@ class NameRecord(NamedTuple):
             is_deposited=self.is_deposited,
             manager_address=self.manager_address,
             resolving_address=self.resolving_address,
-            expiration_date=new_expiration_date,
-            data=self.data
+            expiration_date=new_expiration_date
         )
 
     def update_manager_address(self, new_manager_address: Address) -> 'NameRecord':
@@ -85,8 +81,7 @@ class NameRecord(NamedTuple):
             is_deposited=self.is_deposited,
             manager_address=new_manager_address,
             resolving_address=self.resolving_address,
-            expiration_date=self.expiration_date,
-            data=self.data
+            expiration_date=self.expiration_date
         )
 
     def toggle_is_deposited(self) -> 'NameRecord':
@@ -97,37 +92,7 @@ class NameRecord(NamedTuple):
             is_deposited=not self.is_deposited,
             manager_address=self.manager_address,
             resolving_address=self.resolving_address,
-            expiration_date=self.expiration_date,
-            data=self.data
-        )
-
-    def update_data(self, key: str, value: str) -> 'NameRecord':
-        """Create a new NameRecord with updated data field."""
-        new_data = dict(self.data)  # Create a copy of the current data
-        new_data[key] = value
-        return NameRecord(
-            token_uid=self.token_uid,
-            owner_address=self.owner_address,
-            is_deposited=self.is_deposited,
-            manager_address=self.manager_address,
-            resolving_address=self.resolving_address,
-            expiration_date=self.expiration_date,
-            data=new_data
-        )
-        
-    def remove_data(self, key: str) -> 'NameRecord':
-        """Create a new NameRecord with a data key removed."""
-        new_data = dict(self.data)  # Create a copy of the current data
-        if new_data.get(key) is not None:
-            del new_data[key]
-        return NameRecord(
-            token_uid=self.token_uid,
-            owner_address=self.owner_address,
-            is_deposited=self.is_deposited,
-            manager_address=self.manager_address,
-            resolving_address=self.resolving_address,
-            expiration_date=self.expiration_date,
-            data=new_data
+            expiration_date=self.expiration_date
         )
 
 @export
@@ -137,6 +102,8 @@ class ThothNamer(Blueprint):
     # State variables
     domain: str  # Base domain (e.g., "htr")
     registered_names: dict[str, NameRecord]  # Mapping of names to NameRecord objects
+    name_profile_data: dict[str, dict[str, str]]  # Mapping of names to their profile data
+    name_profile_keys: dict[str, list[str]]  # Mapping of names to list of their profile data keys
     manager_names: dict[Address, list[str]]  # Mapping of manager addresses to their managed names
     manager_primary_name: dict[Address, str]  # Mapping of manager addresses to their primary name
     dev_address: Address  # Developer address for receiving fees
@@ -191,6 +158,8 @@ class ThothNamer(Blueprint):
         self.contract_version = "1.0.0"
 
         self.registered_names: dict[str, NameRecord]  = {}
+        self.name_profile_data: dict[str, dict[str, str]] = {}
+        self.name_profile_keys: dict[str, list[str]] = {}
         self.manager_names: dict[Address, list[str]]  = {}
         self.manager_primary_name: dict[Address, str] = {}
 
@@ -234,9 +203,12 @@ class ThothNamer(Blueprint):
             is_deposited=True,
             manager_address=ctx.caller_id,
             resolving_address=ctx.caller_id,
-            expiration_date=expiration_date,
-            data={}  # Initialize with empty data dictionary
+            expiration_date=expiration_date
         )})
+        
+        # Initialize profile data for this name
+        self.name_profile_data.update({name: {}})
+        self.name_profile_keys.update({name: []})
         
         # Add to manager's list of names
         self._add_name_to_manager(ctx.caller_id, name)
@@ -263,16 +235,27 @@ class ThothNamer(Blueprint):
             raise NameNotFound
             
         record = self.registered_names[name]
-        # Check if key exists
         
-        if record.data.get(key) is None:
+        # Get profile data for this name
+        profile_data = self.name_profile_data.get(name, {})
+        
+        # Check if key exists
+        if profile_data.get(key) is None:
             raise InvalidDataKey('Key does not exist in profile data')
             
         # Authorization check
         if record.manager_address != ctx.caller_id:
             raise NotAuthorized('Only the manager can delete profile data')
-            
-        self.registered_names.update({name: record.remove_data(key)})
+        
+        # Remove the key from profile data
+        del profile_data[key]
+        self.name_profile_data.update({name: profile_data})
+        
+        # Remove key from keys list
+        keys = list(self.name_profile_keys.get(name, []))
+        if key in keys:
+            keys.remove(key)
+            self._update_profile_keys(name, keys)
     
     @public(allow_actions=False)
     def update_profile_data(self, ctx: Context, name: str, key: str, value: str) -> None:
@@ -295,15 +278,28 @@ class ThothNamer(Blueprint):
         self.validate_key_format(key, value)
         
         record = self.registered_names[name]
+        
+        # Get profile data for this name
+        profile_data = self.name_profile_data.get(name, {})
+        
         # Validate total number of keys
-        if len(record.data) >= self.max_profile_data_entries and record.data.get(key) is None:
+        if len(profile_data) >= self.max_profile_data_entries and profile_data.get(key) is None:
             raise TooManyDataKeys(f'Maximum of {self.max_profile_data_entries} profile data keys allowed')
         
         # Authorization check
         if record.manager_address != ctx.caller_id:
             raise NotAuthorized('Only the manager can update profile data')
 
-        self.registered_names[name] = record.update_data(key, value)
+        # Update profile data
+        is_new_key = profile_data.get(key) is None
+        profile_data[key] = value
+        self.name_profile_data.update({name: profile_data})
+        
+        # Add key to keys list if new
+        if is_new_key:
+            keys = list(self.name_profile_keys.get(name, []))
+            keys.append(key)
+            self._update_profile_keys(name, keys)
 
     @public(allow_actions=False)
     def change_name_owner(self, ctx: Context, name: str, new_owner_address: Address) -> None:
@@ -585,12 +581,42 @@ class ThothNamer(Blueprint):
 
     @view
     def get_name_data(self, name: str) -> dict[str, str]:
-        """Get all data associated with a name in a JSON-serializable format."""
+        """Get NameRecord data associated with a name in a JSON-serializable format.
+        
+        Note: Profile data is not included. Use get_profile_data to retrieve profile data.
+        """
         if self.registered_names.get(name) is None:
             raise NameNotFound
 
         record = self.registered_names[name]
-        return self._serialize_name_record(record)
+        return self._serialize_name_record(name, record)
+    
+    @view
+    def get_profile_data(self, name: str) -> dict[str, str]:
+        """Get all profile data for a name.
+        
+        Args:
+            name: The registered name
+            
+        Returns:
+            A dict containing all profile key-value pairs for this name
+            
+        Raises:
+            NameNotFound: If the name is not registered
+        """
+        if self.registered_names.get(name) is None:
+            raise NameNotFound
+        
+        result: dict[str, str] = {}
+        profile_keys = self.name_profile_keys.get(name, [])
+        profile_data = self.name_profile_data.get(name, {})
+        
+        for key in profile_keys:
+            value = profile_data.get(key)
+            if value is not None:
+                result.update({key: value})
+                
+        return result
 
     @view
     def get_name_owner(self, name: str) -> str:
@@ -1026,8 +1052,27 @@ class ThothNamer(Blueprint):
         self._remove_name_from_manager(old_manager, name)
         self._add_name_to_manager(new_manager, name)
     
-    def _serialize_name_record(self, record: NameRecord) -> dict[str, str]:
-        base_data = {
+    def _update_profile_keys(self, name: str, new_keys: list[str]) -> None:
+        """Update the profile keys list for a name.
+        
+        This clears the existing list and adds the new keys.
+        """
+        existing = self.name_profile_keys.get(name)
+        if existing is not None:
+            num_items = len(existing)
+            for _ in range(num_items):
+                existing.pop()
+            for key in new_keys:
+                existing.append(key)
+        else:
+            self.name_profile_keys.update({name: new_keys})
+    
+    def _serialize_name_record(self, name: str, record: NameRecord) -> dict[str, str]:
+        """Serialize NameRecord to a JSON-serializable dict.
+        
+        Note: Profile data is not included. Use get_profile_data to retrieve profile data.
+        """
+        return {
             'token_uid': record.token_uid.hex(),
             'owner_address': str(record.owner_address),
             'is_deposited': str(record.is_deposited),
@@ -1035,9 +1080,6 @@ class ThothNamer(Blueprint):
             'resolving_address': str(record.resolving_address),
             'expiration_date': str(record.expiration_date)
         }
-        # Add profile data
-        base_data.update(record.data)
-        return base_data
 
     def _check_manager_has_only_one_name(self, manager_address: Address) -> bool:
         """Check if a manager has any names."""

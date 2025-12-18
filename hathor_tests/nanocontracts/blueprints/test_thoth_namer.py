@@ -654,3 +654,136 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         if return_key:
             return address_bytes, key
         return address_bytes
+
+    # ==================== Profile Data View Tests ====================
+
+    def test_get_profile_data_empty(self):
+        """Test get_profile_data returns empty dict for new name."""
+        self.initialize_contract()
+        
+        name = "profile-empty"
+        fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', name)
+        self._register_name(name, fee, token_symbol="PE")
+        
+        # Newly registered name should have empty profile data
+        profile_data = self.runner.call_view_method(self.nc_id, 'get_profile_data', name)
+        self.assertEqual(profile_data, {})
+
+    def test_get_profile_data_with_values(self):
+        """Test get_profile_data returns correct values after updates."""
+        self.initialize_contract()
+        
+        name = "profile-values"
+        fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', name)
+        owner_address = self._register_name(name, fee, token_symbol="PV")
+        
+        # Add profile data
+        context = self.create_context(caller_id=Address(owner_address))
+        self.runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "email", "test@example.com")
+        self.runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "website", "https://example.com")
+        self.runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "twitter", "@testuser")
+        
+        # Verify profile data
+        profile_data = self.runner.call_view_method(self.nc_id, 'get_profile_data', name)
+        self.assertEqual(profile_data['email'], 'test@example.com')
+        self.assertEqual(profile_data['website'], 'https://example.com')
+        self.assertEqual(profile_data['twitter'], '@testuser')
+        self.assertEqual(len(profile_data), 3)
+
+    def test_get_profile_data_after_delete(self):
+        """Test get_profile_data correctly reflects deleted keys."""
+        self.initialize_contract()
+        
+        name = "profile-delete"
+        fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', name)
+        owner_address = self._register_name(name, fee, token_symbol="PD")
+        
+        context = self.create_context(caller_id=Address(owner_address))
+        
+        # Add profile data
+        self.runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "key1", "value1")
+        self.runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "key2", "value2")
+        
+        # Delete one key
+        self.runner.call_public_method(self.nc_id, 'delete_profile_data', context, name, "key1")
+        
+        # Verify only key2 remains
+        profile_data = self.runner.call_view_method(self.nc_id, 'get_profile_data', name)
+        self.assertNotIn('key1', profile_data)
+        self.assertEqual(profile_data['key2'], 'value2')
+        self.assertEqual(len(profile_data), 1)
+
+    def test_get_profile_data_nonexistent_name(self):
+        """Test get_profile_data raises NameNotFound for non-existent name."""
+        self.initialize_contract()
+        
+        with self.assertNCFail('NameNotFound'):
+            self.runner.call_view_method(self.nc_id, 'get_profile_data', 'nonexistent')
+
+    def test_get_profile_data_update_existing_key(self):
+        """Test that updating an existing key reflects in get_profile_data."""
+        self.initialize_contract()
+        
+        name = "profile-update"
+        fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', name)
+        owner_address = self._register_name(name, fee, token_symbol="PU")
+        
+        context = self.create_context(caller_id=Address(owner_address))
+        
+        # Add and update profile data
+        self.runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "email", "old@example.com")
+        self.runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "email", "new@example.com")
+        
+        # Verify updated value
+        profile_data = self.runner.call_view_method(self.nc_id, 'get_profile_data', name)
+        self.assertEqual(profile_data['email'], 'new@example.com')
+        self.assertEqual(len(profile_data), 1)  # Should still be 1 key, not 2
+
+    def test_get_name_data_excludes_profile(self):
+        """Test that get_name_data does NOT include profile data."""
+        self.initialize_contract()
+        
+        name = "name-data-test"
+        fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', name)
+        owner_address = self._register_name(name, fee, token_symbol="NDT")
+        
+        context = self.create_context(caller_id=Address(owner_address))
+        
+        # Add profile data
+        self.runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "email", "test@example.com")
+        
+        # get_name_data should not contain profile data
+        name_data = self.runner.call_view_method(self.nc_id, 'get_name_data', name)
+        self.assertNotIn('email', name_data)
+        
+        # Should contain NameRecord fields
+        self.assertIn('token_uid', name_data)
+        self.assertIn('owner_address', name_data)
+        self.assertIn('is_deposited', name_data)
+        self.assertIn('manager_address', name_data)
+        self.assertIn('resolving_address', name_data)
+        self.assertIn('expiration_date', name_data)
+
+    def test_profile_data_persists_through_renewal(self):
+        """Test that profile data persists after name renewal."""
+        self.initialize_contract()
+        
+        name = "profile-persist"
+        fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', name)
+        owner_address = self._register_name(name, fee, token_symbol="PP")
+        
+        context = self.create_context(caller_id=Address(owner_address))
+        
+        # Add profile data
+        self.runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "email", "test@example.com")
+        
+        # Renew the name
+        renew_context = self.create_context(
+            actions=[NCDepositAction(token_uid=self.token_uid, amount=fee)],
+            caller_id=Address(owner_address)
+        )
+        self.runner.call_public_method(self.nc_id, 'renew_name', renew_context, name)
+        
+        # Verify profile data persists
+        profile_data = self.runner.call_view_method(self.nc_id, 'get_profile_data', name)
+        self.assertEqual(profile_data['email'], 'test@example.com')

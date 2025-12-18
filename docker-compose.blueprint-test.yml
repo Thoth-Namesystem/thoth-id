@@ -7,7 +7,7 @@ services:
     volumes:
       - ./hathor/nanocontracts/blueprints:/app/hathor/nanocontracts/blueprints
       - ./hathor/conf/nano_testnet.yml:/app/hathor/conf/nano_testnet.yml
-      - ./tests:/app/tests
+      - ./hathor_tests:/app/hathor_tests
       - ./.git:/app/.git
     environment:
       - GIT_DISCOVERY_ACROSS_FILESYSTEM=1
@@ -15,4 +15,4 @@ services:
 
     command: >
       bash -c
-        "poetry run pytest --capture=no -s --disable-warnings --tb=short --color=yes tests/nanocontracts/blueprints/test_thoth_namer.py && poetry run hathor-cli check-blueprint --file hathor/nanocontracts/blueprints/thoth_namer.py"
+        "poetry run pytest --capture=no -s --disable-warnings --tb=short --color=yes hathor_tests/nanocontracts/blueprints/test_thoth_namer.py && poetry run hathor-cli check-blueprint --file hathor/nanocontracts/blueprints/thoth_namer.py"
