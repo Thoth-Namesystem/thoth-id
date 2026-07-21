@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
+[workspace]
+resolver = "3"
+
+members = ["crates/*"]
+
+[workspace.lints.rust]
+
+# This is better for solving lifetime issues.
+elided_lifetimes_in_paths = "deny"
+
+[workspace.dependencies]
+num-bigint = "0.4"
+num-derive = "0.4"
+num-traits = "0.2"
+pyo3 = { version = "0.29.0", features = ["num-bigint"] }
+
+# Overflows must always panic.
+[profile.release]
+overflow-checks = true
+
+[profile.bench]
+overflow-checks = true
+
+[profile.dev]
+overflow-checks = true

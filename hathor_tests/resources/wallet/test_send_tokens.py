@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 import base64
 
 from twisted.internet.defer import inlineCallbacks
@@ -170,7 +173,7 @@ class SendTokensTest(_BaseResourceTest._ResourceTest):
 
     @inlineCallbacks
     def test_tx_weight(self):
-        self.manager.daa.TEST_MODE = TestMode.DISABLED
+        self.manager.daa_factory.TEST_MODE = TestMode.DISABLED
         add_new_blocks(self.manager, 3, advance_clock=1)
         add_blocks_unlock_reward(self.manager)
         self.reactor.advance(3)

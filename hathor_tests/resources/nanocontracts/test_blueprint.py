@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from collections.abc import Generator
 from typing import Any
 
@@ -19,6 +22,18 @@ class BaseBlueprintInfoTest(GenericNanoResourceTest):
         super().setUp()
         self.manager = self.create_peer('unittests')
         self.web = StubSite(BlueprintInfoResource(self.manager))
+
+    @inlineCallbacks
+    def test_fail_not_a_blueprint(self) -> Generator[Deferred[Any], Any, None]:
+        # Use the genesis block hash, which is a valid vertex but not a blueprint.
+        genesis_block = next(tx for tx in self.manager.tx_storage.get_all_genesis() if tx.is_block)
+        response = yield self.web.get(
+            'blueprint',
+            {
+                b'blueprint_id': bytes(genesis_block.hash_hex, 'utf-8'),
+            }
+        )
+        self.assertEqual(400, response.responseCode)
 
     @inlineCallbacks
     def test_fail_missing_id(self) -> Generator[Deferred[Any], Any, None]:
@@ -71,6 +86,7 @@ class BaseBlueprintInfoTest(GenericNanoResourceTest):
             'a_tuple': 'tuple[str, int, bool]',
             'a_dict_dict_tuple': 'dict[str, tuple[str, int]]',
             'a_optional_int': 'int?',
+            'a_caller_id': 'CallerId',
         })
         self.assertEqual(data['public_methods'], {
             'initialize': {
@@ -133,7 +149,7 @@ class BaseBlueprintInfoTest(GenericNanoResourceTest):
                 'docstring': None,
             },
         }
-        self.assertEqual(data['private_methods'], expected_data)
+        self.assertEqual(data['view_methods'], expected_data)
 
 
 class BuiltinBlueprintInfoTest(BaseBlueprintInfoTest):

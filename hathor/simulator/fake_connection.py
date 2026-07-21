@@ -1,16 +1,5 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
@@ -21,6 +10,7 @@ from OpenSSL.crypto import X509
 from structlog import get_logger
 from twisted.internet.address import IPv4Address, IPv6Address
 from twisted.internet.testing import StringTransport
+from typing_extensions import assert_never
 
 from hathor.p2p.peer import PrivatePeer
 from hathor.p2p.peer_endpoint import PeerAddress, PeerEndpoint
@@ -155,8 +145,8 @@ class FakeConnection:
             self.log.debug('best block is different')
             errmsgs.append('best block is different')
             return False
-        tips1 = {i.data for i in state1.protocol.node.tx_storage.get_tx_tips()}
-        tips2 = {i.data for i in state2.protocol.node.tx_storage.get_tx_tips()}
+        tips1 = {tx.hash for tx in state1.protocol.node.tx_storage.iter_mempool_tips()}
+        tips2 = {tx.hash for tx in state2.protocol.node.tx_storage.iter_mempool_tips()}
         if tips1 != tips2:
             self.log.debug('tx tips are different')
             errmsgs.append('tx tips are different')
@@ -273,7 +263,15 @@ class FakeConnection:
         self._buf2.clear()
 
         self._proto1 = self.manager1.connections.server_factory.buildProtocol(self.addr2)
-        self._proto2 = self.manager2.connections.client_factory.buildProtocol(self.addr1)
+
+        # If in bootstrap mode, now we instantiate the Bootstrap Factory.
+        match self._fake_bootstrap_id:
+            case False:
+                self._proto2 = self.manager2.connections.client_factory.buildProtocol(self.addr1)
+            case None | PeerId():
+                self._proto2 = self.manager2.connections.bootstrap_factory.buildProtocol(self.addr1)
+            case _:
+                assert_never(self._fake_bootstrap_id)
 
         # When _fake_bootstrap_id is set we don't pass the peer because that's how bootstrap calls
         # connect_to_endpoint()

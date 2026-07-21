@@ -1,20 +1,8 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 """ Module that contains a Python API for interacting with a portion of the HTTP/WS APIs
 """
-
 import asyncio
 import random
 import string
@@ -32,6 +20,7 @@ from hathor.manager import HathorManager
 from hathor.mining import BlockTemplate, BlockTemplates
 from hathor.pubsub import EventArguments, HathorEvents
 from hathor.transaction import BaseTransaction, Block, TransactionMetadata
+from hathor.transaction.base_transaction import get_cls_from_tx_version
 from hathor.transaction.storage import TransactionStorage
 
 logger = get_logger()
@@ -390,8 +379,9 @@ def create_tx_from_dict(data: dict[str, Any], update_hash: bool = False,
     if storage:
         data['storage'] = storage
 
-    cls = TxVersion(data['version']).get_cls()
+    cls = get_cls_from_tx_version(TxVersion(data['version']))
     metadata = data.pop('metadata', None)
+    data.pop('token_amount_version')
     tx = cls(**data)
     if update_hash:
         tx.update_hash()

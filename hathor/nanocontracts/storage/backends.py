@@ -1,48 +1,22 @@
-# Copyright 2023 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from hathor.nanocontracts.storage.node_nc_type import NodeNCType
 from hathor.serialization import Deserializer, Serializer
 from hathor.storage.rocksdb_storage import RocksDBStorage
+# Re-export from hathorlib for backward compatibility
+from hathorlib.nanocontracts.storage.backends import *  # noqa: F401,F403
+from hathorlib.nanocontracts.storage.backends import NodeTrieStore  # noqa: F401
 
 if TYPE_CHECKING:
     from hathor.nanocontracts.storage.patricia_trie import Node
 
 
-class NodeTrieStore(ABC):
-    @abstractmethod
-    def __getitem__(self, key: bytes) -> Node:
-        raise NotImplementedError
-
-    @abstractmethod
-    def __setitem__(self, key: bytes, item: Node) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def __len__(self) -> int:
-        raise NotImplementedError
-
-    @abstractmethod
-    def __contains__(self, key: bytes) -> bool:
-        raise NotImplementedError
-
-
+# RocksDBNodeTrieStore stays in hathor (depends on rocksdb)
 class RocksDBNodeTrieStore(NodeTrieStore):
     _CF_NAME = b'nc-state'
     _KEY_LENGTH = b'length'

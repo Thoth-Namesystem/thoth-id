@@ -1,20 +1,10 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import datetime
 import struct
 from enum import IntEnum
+from typing import Callable
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
@@ -46,6 +36,11 @@ from hathor.transaction.scripts.execute import (
     get_script_op,
 )
 from hathor.transaction.scripts.script_context import ScriptContext
+
+
+class OpcodesVersion(IntEnum):
+    V1 = 1
+    V2 = 2
 
 
 class Opcode(IntEnum):
@@ -509,9 +504,18 @@ def op_find_p2pkh(context: ScriptContext) -> None:
     spent_tx = context.extras.spent_tx
     txin = context.extras.txin
     tx = context.extras.tx
-    contract_value = spent_tx.outputs[txin.index].value
+    # Use resolve_spent_output for shielded-aware lookup
+    from hathor.transaction import TxOutput
+    from hathorlib.transaction.shielded_tx_output import OutputMode
+    resolved = spent_tx.resolve_spent_output(txin.index)
+    if resolved.mode() != OutputMode.TRANSPARENT:
+        raise VerifyFailed
+    assert isinstance(resolved, TxOutput)
+    contract_value = resolved.value
 
     address = context.stack.pop()
+    if not isinstance(address, bytes):
+        raise VerifyFailed
     address_b58 = get_address_b58_from_bytes(address)
     for output in tx.outputs:
         p2pkh_out = P2PKH.parse_script(output.script)
@@ -626,7 +630,7 @@ def op_integer(opcode: int, stack: Stack) -> None:
         raise ScriptError(e) from e
 
 
-def execute_op_code(opcode: Opcode, context: ScriptContext) -> None:
+def execute_op_code(opcode: Opcode, context: ScriptContext, version: OpcodesVersion) -> None:
     """
     Execute a function opcode.
 
@@ -635,17 +639,27 @@ def execute_op_code(opcode: Opcode, context: ScriptContext) -> None:
         context: the script context to be manipulated.
     """
     context.logs.append(f'Executing function opcode {opcode.name} ({hex(opcode.value)})')
-    match opcode:
-        case Opcode.OP_DUP: op_dup(context)
-        case Opcode.OP_EQUAL: op_equal(context)
-        case Opcode.OP_EQUALVERIFY: op_equalverify(context)
-        case Opcode.OP_CHECKSIG: op_checksig(context)
-        case Opcode.OP_HASH160: op_hash160(context)
-        case Opcode.OP_GREATERTHAN_TIMESTAMP: op_greaterthan_timestamp(context)
-        case Opcode.OP_CHECKMULTISIG: op_checkmultisig(context)
-        case Opcode.OP_DATA_STREQUAL: op_data_strequal(context)
-        case Opcode.OP_DATA_GREATERTHAN: op_data_greaterthan(context)
-        case Opcode.OP_DATA_MATCH_VALUE: op_data_match_value(context)
-        case Opcode.OP_CHECKDATASIG: op_checkdatasig(context)
-        case Opcode.OP_FIND_P2PKH: op_find_p2pkh(context)
-        case _: raise ScriptError(f'unknown opcode: {opcode}')
+    opcode_fns: dict[Opcode, Callable[[ScriptContext], None]] = {
+        Opcode.OP_DUP: op_dup,
+        Opcode.OP_EQUAL: op_equal,
+        Opcode.OP_EQUALVERIFY: op_equalverify,
+        Opcode.OP_CHECKSIG: op_checksig,
+        Opcode.OP_HASH160: op_hash160,
+        Opcode.OP_GREATERTHAN_TIMESTAMP: op_greaterthan_timestamp,
+        Opcode.OP_CHECKMULTISIG: op_checkmultisig,
+    }
+
+    if version == OpcodesVersion.V1:
+        opcode_fns.update({
+            Opcode.OP_DATA_STREQUAL: op_data_strequal,
+            Opcode.OP_DATA_GREATERTHAN: op_data_greaterthan,
+            Opcode.OP_DATA_MATCH_VALUE: op_data_match_value,
+            Opcode.OP_CHECKDATASIG: op_checkdatasig,
+            Opcode.OP_FIND_P2PKH: op_find_p2pkh,
+        })
+
+    opcode_fn = opcode_fns.get(opcode)
+    if opcode_fn is None:
+        raise ScriptError(f'unknown opcode: {opcode}')
+
+    opcode_fn(context)

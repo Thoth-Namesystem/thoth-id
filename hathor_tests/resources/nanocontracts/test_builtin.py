@@ -1,19 +1,7 @@
-#  Copyright 2025 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from hathor.nanocontracts import Blueprint, Context, public
-from hathor.nanocontracts.catalog import NCBlueprintCatalog
 from hathor.nanocontracts.resources.builtin import BlueprintBuiltinResource
 from hathor_tests.resources.base_resource import StubSite, _BaseResourceTest
 
@@ -40,7 +28,7 @@ class BlueprintBuiltinResourceTest(_BaseResourceTest._ResourceTest):
         )
         self.web = StubSite(BlueprintBuiltinResource(self.manager))
 
-        self.manager.tx_storage.nc_catalog = NCBlueprintCatalog({
+        self.manager.blueprint_service.register_blueprints({
             (b'\x11' * 32): MyBlueprint1,
             (b'\x22' * 32): MyBlueprint2,
             (b'\x33' * 32): MyBlueprint2,

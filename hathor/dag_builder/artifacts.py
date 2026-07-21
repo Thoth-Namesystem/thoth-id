@@ -1,20 +1,9 @@
-# Copyright 2024 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterator, NamedTuple, Sequence, TypeVar
+from typing import TYPE_CHECKING, Callable, Iterator, NamedTuple, Sequence, TypeVar
 
 from hathor.dag_builder.types import DAGNode
 from hathor.manager import HathorManager
@@ -42,6 +31,11 @@ class DAGArtifacts:
 
         self.list: tuple[_Pair, ...] = tuple(v)
         self._last_propagated: str | None = None
+        self._step_fns: list[Callable[[DAGNode, BaseTransaction], None]] = []
+
+    def register_step_fn(self, step_fn: Callable[[DAGNode, BaseTransaction], None]) -> None:
+        """Register a new step function to be called between vertex propagations."""
+        self._step_fns.append(step_fn)
 
     def get_typed_vertex(self, name: str, type_: type[T]) -> T:
         """Get a vertex by name, asserting it is of the provided type."""
@@ -83,6 +77,8 @@ class DAGArtifacts:
                     assert manager.vertex_handler.on_new_relayed_vertex(vertex)
                 except Exception as e:
                     raise Exception(f'failed on_new_tx({node.name})') from e
+                for step_fn in self._step_fns:
+                    step_fn(node, vertex)
                 self._last_propagated = node.name
 
             if node.name == self._last_propagated:

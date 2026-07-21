@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from twisted.internet.defer import inlineCallbacks
 
 from hathor.simulator.utils import add_new_blocks
@@ -8,7 +11,8 @@ from hathor.transaction.token_creation_tx import TokenCreationTransaction
 from hathor.transaction.token_info import TokenVersion
 from hathor.transaction.validation_state import ValidationState
 from hathor_tests.resources.base_resource import StubSite, _BaseResourceTest
-from hathor_tests.utils import add_blocks_unlock_reward, add_new_transactions
+from hathor_tests.utils import add_blocks_unlock_reward, add_new_transactions, create_fee_tokens
+from hathorlib.token_amount_version import TokenAmountVersion
 
 
 class TransactionTest(_BaseResourceTest._ResourceTest):
@@ -182,6 +186,11 @@ class TransactionTest(_BaseResourceTest._ResourceTest):
         # First block data
         self.assertEqual(data['meta']['first_block'], None)
         self.assertEqual(data['meta']['first_block_height'], None)
+
+        # Token amount version
+        token_amount_version = TokenAmountVersion.V1
+        assert tx.get_token_amount_version() == token_amount_version
+        assert data['tx']['token_amount_version'] == token_amount_version
 
     @inlineCallbacks
     def test_get_one_known_tx_with_authority(self):
@@ -526,3 +535,45 @@ class TransactionTest(_BaseResourceTest._ResourceTest):
         response = yield self.web.get("transaction", {b'id': bytes(tx.hash_hex, 'utf-8')})
         data = response.json_value()
         self.assertFalse(data['success'])
+
+    @inlineCallbacks
+    def test_get_transaction_with_fee_header(self):
+        """Test that the /transaction endpoint returns fee header data in the response."""
+        add_new_blocks(self.manager, 2, advance_clock=1)
+        add_blocks_unlock_reward(self.manager)
+
+        address = self.manager.wallet.get_unused_address(mark_as_used=True)
+        fee_tx = create_fee_tokens(self.manager, address_b58=address, propagate=True)
+
+        self.assertTrue(fee_tx.has_fees())
+
+        response = yield self.web.get("transaction", {b'id': bytes(fee_tx.hash.hex(), 'utf-8')})
+        data = response.json_value()
+
+        self.assertTrue(data['success'])
+        tx_json = data['tx']
+
+        # Verify fees field is present and has the correct structure
+        self.assertIn('fees', tx_json)
+        self.assertEqual(len(tx_json['fees']), 1)
+
+        fee_entry = tx_json['fees'][0]
+        self.assertIn('token_uid', fee_entry)
+        self.assertIn('amount', fee_entry)
+
+        # The fee is paid in HTR (token_index=0)
+        self.assertEqual(fee_entry['token_uid'], self._settings.HATHOR_TOKEN_UID.hex())
+        self.assertEqual(fee_entry['amount'], self._settings.FEE_PER_OUTPUT_V1)
+
+    @inlineCallbacks
+    def test_get_transaction_without_fee_header(self):
+        """Test that the /transaction endpoint does not include fees for regular transactions."""
+        add_new_blocks(self.manager, 2, advance_clock=1)
+        add_blocks_unlock_reward(self.manager)
+        tx = add_new_transactions(self.manager, 1)[0]
+
+        response = yield self.web.get("transaction", {b'id': bytes(tx.hash.hex(), 'utf-8')})
+        data = response.json_value()
+
+        self.assertTrue(data['success'])
+        self.assertNotIn('fees', data['tx'])

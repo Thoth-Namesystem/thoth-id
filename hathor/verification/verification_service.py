@@ -1,16 +1,5 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from typing_extensions import assert_never
 
@@ -260,13 +249,14 @@ class VerificationService:
             # TODO do genesis validation
             return
         self.verify_without_storage(tx, params)
-        self.verifiers.tx.verify_sigops_input(tx, params.enable_checkdatasig_count)
-        self.verifiers.tx.verify_inputs(tx)  # need to run verify_inputs first to check if all inputs exist
+        self.verifiers.tx.verify_sigops_input(tx, params.features.count_checkdatasig_op)
+        self.verifiers.tx.verify_inputs(tx, params)  # need to run verify_inputs first to check if all inputs exist
         self.verifiers.tx.verify_version(tx, params)
 
         block_storage = self._get_block_storage(params)
-        self.verifiers.tx.verify_sum(
+        self.verifiers.tx.verify_transparent_balance(
             self._settings,
+            tx,
             token_dict or tx.get_complete_token_info(block_storage),
             # if this tx isn't a nano contract we assume we can find all the tokens to validate this tx
             allow_nonexistent_tokens=tx.is_nano_contract()
@@ -279,7 +269,7 @@ class VerificationService:
     def _verify_token_creation_tx(self, tx: TokenCreationTransaction, params: VerificationParams) -> None:
         """ Run all validations as regular transactions plus validation on token info.
 
-        We also overload verify_sum to make some different checks
+        We also overload verify_transparent_balance to make some different checks
         """
         # we should validate the token info before verifying the tx
         self.verifiers.token_creation_tx.verify_token_info(tx, params)
@@ -290,6 +280,8 @@ class VerificationService:
     def verify_without_storage(self, vertex: BaseTransaction, params: VerificationParams) -> None:
         if vertex.hash in self._settings.SKIP_VERIFICATION:
             return
+
+        self.verifiers.vertex.verify_signal_bits(vertex)
 
         if vertex.has_fees():
             self._verify_without_storage_fee_header(vertex)
@@ -319,14 +311,14 @@ class VerificationService:
 
         if vertex.is_nano_contract():
             assert self._settings.ENABLE_NANO_CONTRACTS
-            self._verify_without_storage_nano_header(vertex)
+            self._verify_without_storage_nano_header(vertex, params)
 
     def _verify_without_storage_base_block(self, block: Block, params: VerificationParams) -> None:
         self.verifiers.block.verify_no_inputs(block)
         self.verifiers.vertex.verify_outputs(block)
         self.verifiers.block.verify_output_token_indexes(block)
         self.verifiers.block.verify_data(block)
-        self.verifiers.vertex.verify_sigops_output(block, params.enable_checkdatasig_count)
+        self.verifiers.vertex.verify_sigops_output(block, params.features.count_checkdatasig_op)
 
     def _verify_without_storage_block(self, block: Block, params: VerificationParams) -> None:
         """ Run all verifications that do not need a storage.
@@ -348,7 +340,7 @@ class VerificationService:
         self.verifiers.tx.verify_number_of_inputs(tx)
         self.verifiers.vertex.verify_outputs(tx)
         self.verifiers.tx.verify_output_token_indexes(tx)
-        self.verifiers.vertex.verify_sigops_output(tx, params.enable_checkdatasig_count)
+        self.verifiers.vertex.verify_sigops_output(tx, params.features.count_checkdatasig_op)
         self.verifiers.tx.verify_tokens(tx, params)
 
     def _verify_without_storage_token_creation_tx(
@@ -358,10 +350,10 @@ class VerificationService:
     ) -> None:
         self._verify_without_storage_tx(tx, params)
 
-    def _verify_without_storage_nano_header(self, tx: BaseTransaction) -> None:
+    def _verify_without_storage_nano_header(self, tx: BaseTransaction, params: VerificationParams) -> None:
         assert tx.is_nano_contract()
-        self.verifiers.nano_header.verify_nc_signature(tx)
-        self.verifiers.nano_header.verify_actions(tx)
+        self.verifiers.nano_header.verify_nc_signature(tx, params)
+        self.verifiers.nano_header.verify_actions(tx, params)
 
     def _verify_without_storage_fee_header(self, tx: BaseTransaction) -> None:
         assert tx.has_fees()

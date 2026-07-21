@@ -1,16 +1,5 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from enum import Enum
 from itertools import islice
@@ -85,32 +74,16 @@ class MempoolResource(Resource):
         return json_dumpb(data)
 
     def _get_from_index(self, index_source: IndexSource) -> Iterator[Transaction]:
-        tx_storage = self.manager.tx_storage
-        assert tx_storage.indexes is not None
-        if index_source == IndexSource.ANY:
-            # XXX: if source is ANY we try to use the mempool when possible
-            if tx_storage.indexes.mempool_tips is not None:
-                yield from self._get_from_mempool_tips_index()
-            else:
-                yield from self._get_from_tx_tips_index()
-        elif index_source == IndexSource.MEMPOOL:
-            if tx_storage.indexes.mempool_tips is None:
-                raise ValueError('mempool index is not enabled')
+        if index_source == IndexSource.ANY or index_source == IndexSource.MEMPOOL:
+            # XXX: if source is ANY we try to use the mempool
             yield from self._get_from_mempool_tips_index()
         elif index_source == IndexSource.TX_TIPS:
-            if tx_storage.indexes.tx_tips is None:
-                raise ValueError('tx-tips index is not enabled')
-            yield from self._get_from_tx_tips_index()
+            raise ValueError('tx-tips index has been removed')
         else:
             raise NotImplementedError  # XXX: this cannot happen
 
-    def _get_from_tx_tips_index(self) -> Iterator[Transaction]:
-        yield from self.manager.tx_storage.iter_mempool_from_tx_tips()
-
     def _get_from_mempool_tips_index(self) -> Iterator[Transaction]:
         tx_storage = self.manager.tx_storage
-        assert tx_storage.indexes is not None
-        assert tx_storage.indexes.mempool_tips is not None
         yield from tx_storage.indexes.mempool_tips.iter_all(tx_storage)
 
 

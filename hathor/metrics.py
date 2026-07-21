@@ -1,16 +1,5 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from collections import deque
 from dataclasses import dataclass, field
@@ -20,13 +9,13 @@ from structlog import get_logger
 from twisted.internet.task import LoopingCall
 
 from hathor.conf import HathorSettings
+from hathor.mining.ws import MiningWebsocketFactory
 from hathor.p2p.manager import ConnectionsManager, PeerConnectionsMetrics
 from hathor.pubsub import EventArguments, HathorEvents, PubSubManager
 from hathor.reactor import ReactorProtocol as Reactor
 from hathor.transaction.base_transaction import sum_weights
 from hathor.transaction.block import Block
 from hathor.transaction.storage import TransactionRocksDBStorage, TransactionStorage
-from hathor.transaction.storage.cache_storage import TransactionCacheStorage
 
 if TYPE_CHECKING:
     from hathor.stratum import StratumFactory  # noqa: F401
@@ -118,6 +107,9 @@ class Metrics:
     # Peers known
     known_peers: int = 0
 
+    mining_ws_connections: int = 0
+    mining_ws_factory: MiningWebsocketFactory | None = None
+
     def __post_init__(self) -> None:
         self.log = logger.new()
 
@@ -149,9 +141,9 @@ class Metrics:
             self.hash_rate = self.calculate_new_hashrate(last_block[0])
             self.best_block_height = self.tx_storage.get_height_best_block()
 
-        if isinstance(self.tx_storage, TransactionCacheStorage):
-            self.log.info("Transaction cache hits during initialization", hits=self.tx_storage.stats.get("hit"))
-            self.log.info("Transaction cache misses during initialization", misses=self.tx_storage.stats.get("miss"))
+        if cache_data := self.tx_storage.get_cache_data():
+            self.log.info("Transaction cache hits during initialization", hits=cache_data.hit)
+            self.log.info("Transaction cache misses during initialization", misses=cache_data.miss)
 
     def start(self) -> None:
         self._start_initial_values()
@@ -182,6 +174,10 @@ class Metrics:
     def handle_publish(self, key: HathorEvents, args: EventArguments) -> None:
         """ This method is called when pubsub publishes an event that we subscribed
         """
+        # Ignore events that arrive after metrics was stopped (this could happen in some tests and lead to segfaults)
+        if not self.is_running:
+            return
+
         data = args.__dict__
         if key == HathorEvents.NETWORK_NEW_TX_ACCEPTED:
             if data['tx'].is_block:
@@ -221,6 +217,10 @@ class Metrics:
 
             self.websocket_connections = len(self.websocket_factory.connections)
             self.subscribed_addresses = len(self.websocket_factory.address_connections)
+
+    def set_mining_ws_data(self) -> None:
+        if self.mining_ws_factory:
+            self.mining_ws_connections = len(self.mining_ws_factory.connections)
 
     def set_stratum_data(self) -> None:
         """ Set stratum metrics data for the mining process
@@ -272,19 +272,12 @@ class Metrics:
     def set_cache_data(self) -> None:
         """ Collect and set data related to the transactions cache.
         """
-        if isinstance(self.tx_storage, TransactionCacheStorage):
-            hits = self.tx_storage.stats.get("hit")
-            misses = self.tx_storage.stats.get("miss")
-            if hits:
-                self.transaction_cache_hits = hits
-            if misses:
-                self.transaction_cache_misses = misses
+        if cache_data := self.tx_storage.get_cache_data():
+            self.transaction_cache_hits = cache_data.hit
+            self.transaction_cache_misses = cache_data.miss
 
     def set_tx_storage_data(self) -> None:
         store = self.tx_storage
-
-        if isinstance(self.tx_storage, TransactionCacheStorage):
-            store = self.tx_storage.store
 
         if not isinstance(store, TransactionRocksDBStorage):
             # We currently only collect metrics for RocksDB
@@ -305,6 +298,7 @@ class Metrics:
         """ Call methods that collect data to metrics
         """
         self.set_websocket_data()
+        self.set_mining_ws_data()
         self.set_stratum_data()
         self.set_cache_data()
         self.collect_peer_connection_metrics()

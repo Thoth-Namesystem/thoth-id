@@ -1,7 +1,10 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from hathor.conf import HathorSettings
 from hathor.crypto.util import get_address_b58_from_bytes
+from hathor.indexes import RocksDBIndexesManager
 from hathor.nanocontracts import Blueprint, Context, public
-from hathor.nanocontracts.catalog import NCBlueprintCatalog
 from hathor.nanocontracts.utils import sign_openssl
 from hathor.storage.rocksdb_storage import RocksDBStorage
 from hathor.transaction import Transaction
@@ -32,10 +35,7 @@ class NCHistoryIndexesTest(unittest.TestCase):
 
     def test_basic(self):
         blueprint_id = b'x' * 32
-        self.catalog = NCBlueprintCatalog({
-            blueprint_id: MyTestBlueprint
-        })
-        self.manager.tx_storage.nc_catalog = self.catalog
+        self.manager.blueprint_service.register_blueprint(blueprint_id, MyTestBlueprint)
 
         parents = self.manager.get_new_tx_parents()
         nc = Transaction(weight=1, inputs=[], outputs=[], parents=parents, storage=self.tx_storage)
@@ -80,12 +80,9 @@ class NCHistoryIndexesTest(unittest.TestCase):
 
     def test_latest_tx_timestamp(self) -> None:
         blueprint_id = b'x' * 32
-        catalog = NCBlueprintCatalog({
-            blueprint_id: MyTestBlueprint
-        })
         manager = self.create_peer('testnet', nc_indexes=True)
         nc_history_index = manager.tx_storage.indexes.nc_history
-        manager.tx_storage.nc_catalog = catalog
+        manager.blueprint_service.register_blueprint(blueprint_id, MyTestBlueprint)
         dag_builder = TestDAGBuilder.from_manager(manager)
         artifacts = dag_builder.build_from_str(f'''
             blockchain genesis b[1..11]
@@ -114,7 +111,7 @@ class NCHistoryIndexesTest(unittest.TestCase):
         manager = self.create_peer_from_builder(builder)
         assert isinstance(manager.tx_storage, TransactionRocksDBStorage)
         path = manager.tx_storage._rocksdb_storage.path
-        indexes_manager = not_none(manager.tx_storage.indexes)
+        indexes_manager = manager.tx_storage.indexes
         nc_history_index = not_none(indexes_manager.nc_history)
         private_key = unittest.OCB_TEST_PRIVKEY.hex()
         password = unittest.OCB_TEST_PASSWORD.hex()
@@ -174,7 +171,7 @@ class NCHistoryIndexesTest(unittest.TestCase):
         # Test loading counts from existing db
         builder2 = self.get_builder().set_rocksdb_path(path).enable_nc_indexes()
         manager2 = self.create_peer_from_builder(builder2)
-        indexes_manager2 = not_none(manager2.tx_storage.indexes)
+        indexes_manager2 = manager2.tx_storage.indexes
         nc_history_index = not_none(indexes_manager2.nc_history)
 
         assert nc_history_index.get_transaction_count(nc1.hash) == 3
@@ -199,12 +196,15 @@ class RocksDBNCHistoryIndexesTest(NCHistoryIndexesTest):
         vertex_parser = VertexParser(settings=self._settings)
         nc_storage_factory = NCRocksDBStorageFactory(rocksdb_storage)
         vertex_children_service = RocksDBVertexChildrenService(rocksdb_storage)
+        indexes = RocksDBIndexesManager(rocksdb_storage=rocksdb_storage, settings=settings)
         self.tx_storage = TransactionRocksDBStorage(
-            rocksdb_storage,
+            reactor=self.reactor,
+            rocksdb_storage=rocksdb_storage,
             settings=self._settings,
             vertex_parser=vertex_parser,
             nc_storage_factory=nc_storage_factory,
             vertex_children_service=vertex_children_service,
+            indexes=indexes,
         )
         self.genesis = self.tx_storage.get_all_genesis()
         self.genesis_blocks = [tx for tx in self.genesis if tx.is_block]

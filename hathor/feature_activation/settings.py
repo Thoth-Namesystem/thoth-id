@@ -1,29 +1,19 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from collections import defaultdict
-from typing import Any, NamedTuple, Optional
+from typing import NamedTuple, Optional
 
-from pydantic import Field, NonNegativeInt, PositiveInt, validator
+from pydantic import ConfigDict, Field, NonNegativeInt, PositiveInt, model_validator
 
 from hathor.feature_activation.feature import Feature
 from hathor.feature_activation.model.criteria import Criteria
 from hathor.utils.pydantic import BaseModel
 
 
-class Settings(BaseModel, validate_all=True):
+class Settings(BaseModel):
     """Feature Activation settings."""
+    model_config = ConfigDict(validate_default=True)
 
     # The number of blocks in the feature activation evaluation interval.
     # Equivalent to 1 week (20160 * 30 seconds = 1 week)
@@ -41,40 +31,34 @@ class Settings(BaseModel, validate_all=True):
     # neither their values changed, to preserve history.
     features: dict[Feature, Criteria] = {}
 
-    @validator('default_threshold')
-    def _validate_default_threshold(cls, default_threshold: int, values: dict[str, Any]) -> int:
+    @model_validator(mode='after')
+    def _validate_default_threshold(self) -> 'Settings':
         """Validates that the default_threshold is not greater than the evaluation_interval."""
-        evaluation_interval = values.get('evaluation_interval')
-        assert evaluation_interval is not None, 'evaluation_interval must be set'
-
-        if default_threshold > evaluation_interval:
+        if self.default_threshold > self.evaluation_interval:
             raise ValueError(
                 f'default_threshold must not be greater than evaluation_interval: '
-                f'{default_threshold} > {evaluation_interval}'
+                f'{self.default_threshold} > {self.evaluation_interval}'
             )
+        return self
 
-        return default_threshold
-
-    @validator('features')
-    def _validate_features(cls, features: dict[Feature, Criteria], values: dict[str, Any]) -> dict[Feature, Criteria]:
+    @model_validator(mode='after')
+    def _validate_features(self) -> 'Settings':
         """Validate Criteria by calling its to_validated() method, injecting the necessary attributes."""
-        evaluation_interval = values.get('evaluation_interval')
-        max_signal_bits = values.get('max_signal_bits')
-        assert evaluation_interval is not None, 'evaluation_interval must be set'
-        assert max_signal_bits is not None, 'max_signal_bits must be set'
-
-        return {
-            feature: criteria.to_validated(evaluation_interval, max_signal_bits)
-            for feature, criteria in features.items()
+        validated_features = {
+            feature: criteria.to_validated(self.evaluation_interval, self.max_signal_bits)
+            for feature, criteria in self.features.items()
         }
+        # Use object.__setattr__ because the model is frozen
+        object.__setattr__(self, 'features', validated_features)
+        return self
 
-    @validator('features')
-    def _validate_conflicting_bits(cls, features: dict[Feature, Criteria]) -> dict[Feature, Criteria]:
+    @model_validator(mode='after')
+    def _validate_conflicting_bits(self) -> 'Settings':
         """
         Validates that a bit is only reused if the start_height of a new feature is
         greater than the timeout_height of the previous feature that used that bit.
         """
-        intervals_by_bit = _get_intervals_by_bit(features)
+        intervals_by_bit = _get_intervals_by_bit(self.features)
 
         for intervals in intervals_by_bit.values():
             overlap = _find_overlap(intervals)
@@ -86,7 +70,7 @@ class Settings(BaseModel, validate_all=True):
                     f'{first.feature.value} and {second.feature.value}'
                 )
 
-        return features
+        return self
 
 
 class FeatureInterval(NamedTuple):

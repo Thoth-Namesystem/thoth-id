@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from collections.abc import Iterator
 from sys import version_info
 from types import MethodType
@@ -5,7 +8,7 @@ from typing import Any
 
 from hathor.nanocontracts import Blueprint, Context, public
 from hathor.nanocontracts.allowed_imports import ALLOWED_IMPORTS
-from hathor.nanocontracts.custom_builtins import EXEC_BUILTINS
+from hathor.nanocontracts.custom_builtins import get_exec_builtins
 from hathor_tests.nanocontracts.blueprints.unittest import BlueprintTestCase
 
 MAX_DEPTH = 20
@@ -29,7 +32,6 @@ KNOWN_CASES = [
     'hathor.Context.block',
     'hathor.Context.caller_id',
     'hathor.Context.copy',
-    'hathor.Context.create_from_vertex',
     'hathor.Context.get_caller_address',
     'hathor.Context.get_caller_contract_id',
     'hathor.Context.get_single_action',
@@ -90,7 +92,6 @@ KNOWN_CASES = [
     'hathor.NCFail.some_new_attribute',
     'hathor.NCFail.with_traceback',
     'hathor.NCFee.amount',
-    'hathor.NCFee.get_htr_value',
     'hathor.NCFee.some_new_attribute',
     'hathor.NCFee.token_uid',
     'hathor.NCGrantAuthorityAction.melt',
@@ -118,6 +119,7 @@ KNOWN_CASES = [
     'hathor.SignedData.some_new_attribute',
     'hathor.export.some_new_attribute',
     'hathor.fallback.some_new_attribute',
+    'hathor.json_dumps.some_new_attribute',
     'hathor.public.some_new_attribute',
     'hathor.sha3.some_new_attribute',
     'hathor.verify_ecdsa.some_new_attribute',
@@ -146,6 +148,14 @@ KNOWN_CASES = [
 if version_info[1] == 11:
     KNOWN_CASES.extend([
         'hathor.SignedData._is_protocol',
+    ])
+
+
+# XXX: these only appear in Python 3.13
+if version_info[1] == 13:
+    KNOWN_CASES.extend([
+        'hathor.NCActionType._hashable_values_',
+        'hathor.NCActionType._unhashable_values_map_',
     ])
 
 KNOWN_CASES.sort()
@@ -251,14 +261,15 @@ class MyBlueprint(Blueprint):
         mutable_props.extend(search_writeable_properties(MyBlueprint, 'MyBlueprint'))
         mutable_props.extend(search_writeable_properties(self, 'self'))
         mutable_props.extend(search_writeable_properties(ctx, 'ctx'))
-        custom_import = EXEC_BUILTINS['__import__']
+        exec_builtins = get_exec_builtins()
+        custom_import = exec_builtins['__import__']
         for module_name, import_names in ALLOWED_IMPORTS.items():
             module = custom_import(module_name, fromlist=list(import_names))
             for import_name in import_names:
                 obj = getattr(module, import_name)
                 obj_name = f'{module_name}.{import_name}'
                 mutable_props.extend(search_writeable_properties(obj, obj_name))
-        for builtin_name, builtin_obj in EXEC_BUILTINS.items():
+        for builtin_name, builtin_obj in exec_builtins.items():
             if should_skip_attr(builtin_name):
                 continue
             mutable_props.extend(search_writeable_properties(builtin_obj, builtin_name))

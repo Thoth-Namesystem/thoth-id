@@ -1,16 +1,5 @@
-# Copyright 2024 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import ast
 import re
@@ -22,7 +11,7 @@ from typing_extensions import assert_never
 
 from hathor.conf.settings import HathorSettings
 from hathor.crypto.util import decode_address, get_address_from_public_key_bytes
-from hathor.daa import DifficultyAdjustmentAlgorithm
+from hathor.daa import DAAFactory
 from hathor.dag_builder.builder import FEE_KEY, NC_DEPOSIT_KEY, NC_WITHDRAWAL_KEY, DAGBuilder, DAGNode
 from hathor.dag_builder.types import DAGNodeType, VertexResolverType, WalletFactoryType
 from hathor.dag_builder.utils import get_literal, is_literal
@@ -45,6 +34,7 @@ from hathor.transaction.headers.nano_header import ADDRESS_LEN_BYTES
 from hathor.transaction.scripts.p2pkh import P2PKH
 from hathor.transaction.token_creation_tx import TokenCreationTransaction
 from hathor.wallet import BaseWallet, HDWallet, KeyPair
+from hathorlib.token_amount import UnsignedAmount
 
 _TEMPLATE_PATTERN = re.compile(r'`(\w+)`')
 
@@ -57,7 +47,7 @@ class VertexExporter:
         *,
         builder: DAGBuilder,
         settings: HathorSettings,
-        daa: DifficultyAdjustmentAlgorithm,
+        daa_factory: DAAFactory,
         genesis_wallet: BaseWallet,
         wallet_factory: WalletFactoryType,
         vertex_resolver: VertexResolverType,
@@ -71,7 +61,7 @@ class VertexExporter:
         self._block_height: dict[bytes, int] = {}
 
         self._settings = settings
-        self._daa = daa
+        self._daa_factory = daa_factory
         self._wallet_factory = wallet_factory
         self._vertex_resolver = vertex_resolver
         self._nc_catalog = nc_catalog
@@ -256,7 +246,7 @@ class VertexExporter:
         if 'weight' in node.attrs:
             vertex.weight = float(node.attrs['weight'])
         else:
-            vertex.weight = self._daa.minimum_tx_weight(vertex)
+            vertex.weight = self._daa_factory.minimum_tx_weight(vertex)
         self.update_vertex_hash(vertex)
         return vertex
 
@@ -282,13 +272,20 @@ class VertexExporter:
         if 'weight' in node.attrs:
             blk.weight = float(node.attrs['weight'])
         else:
-            blk.weight = self._daa.calculate_block_difficulty(blk, self.get_parent_block)
+            # Synthetic dag_builder blocks have no static metadata and the factory has
+            # no feature_service wired, so call create_v1 directly — dag_builder is
+            # V1-only by construction.
+            daa = self._daa_factory.create_v1()
+            blk.weight = daa.calculate_block_difficulty(blk, self.get_parent_block)
+        if 'signal_bits' in node.attrs:
+            blk.signal_bits = int(node.attrs['signal_bits'])
         self.update_vertex_hash(blk)
         self._block_height[blk.hash] = height
         return blk
 
     def _get_ast_value_bytes(self, ast_node: ast.AST) -> bytes:
         if isinstance(ast_node, ast.Constant):
+            assert isinstance(ast_node.value, str)
             return bytes.fromhex(ast_node.value)
         elif isinstance(ast_node, ast.Name):
             return self.get_vertex_id(ast_node.id)
@@ -380,7 +377,7 @@ class VertexExporter:
             actions = node.get_attr_list(key, default=[])
             for token_name, value in actions:
                 assert isinstance(token_name, str)
-                assert isinstance(value, int)
+                assert isinstance(value, UnsignedAmount)
                 token_index = 0
                 if token_name != 'HTR':
                     assert isinstance(vertex, Transaction)
@@ -497,7 +494,7 @@ class VertexExporter:
         if 'weight' in node.attrs:
             ocb.weight = float(node.attrs['weight'])
         else:
-            ocb.weight = self._daa.minimum_tx_weight(ocb)
+            ocb.weight = self._daa_factory.minimum_tx_weight(ocb)
 
         self.update_vertex_hash(ocb)
         return ocb
@@ -516,7 +513,7 @@ class VertexExporter:
         if 'weight' in node.attrs:
             tx.weight = float(node.attrs['weight'])
         else:
-            tx.weight = self._daa.minimum_tx_weight(tx)
+            tx.weight = self._daa_factory.minimum_tx_weight(tx)
         self.update_vertex_hash(tx)
         return tx
 
@@ -529,7 +526,7 @@ class VertexExporter:
             vertex.hash = self._settings.GENESIS_BLOCK_HASH
             vertex.timestamp = self._settings.GENESIS_BLOCK_TIMESTAMP
             txout = TxOutput(
-                value=self._settings.GENESIS_TOKENS,
+                value=self._settings.GENESIS_TOKEN_ATOMIC_UNITS,
                 token_data=0,
                 script=self._settings.GENESIS_OUTPUT_SCRIPT
             )

@@ -1,16 +1,5 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import base64
 import datetime
@@ -136,19 +125,21 @@ def execute(args: Namespace) -> None:
             from unittest.mock import Mock
 
             from hathor.conf.get_settings import get_global_settings
-            from hathor.daa import DifficultyAdjustmentAlgorithm
+            from hathor.daa import DAAFactory
+            from hathor.feature_activation.utils import Features
             from hathor.verification.verification_params import VerificationParams
             from hathor.verification.verification_service import VerificationService
             from hathor.verification.vertex_verifiers import VertexVerifiers
             settings = get_global_settings()
-            daa = DifficultyAdjustmentAlgorithm(settings=settings)
-            verification_params = VerificationParams(nc_block_root_id=None, enable_checkdatasig_count=True)
+            daa_factory = DAAFactory(settings=settings)
+            verification_params = VerificationParams(nc_block_root_id=None, features=Features.all_enabled())
             verifiers = VertexVerifiers.create_defaults(
                 reactor=Mock(),
                 settings=settings,
-                daa=daa,
+                daa_factory=daa_factory,
                 feature_service=Mock(),
                 tx_storage=Mock(),
+                blueprint_service=Mock(),
             )
             verification_service = VerificationService(settings=settings, verifiers=verifiers)
             verification_service.verify_without_storage(block, verification_params)

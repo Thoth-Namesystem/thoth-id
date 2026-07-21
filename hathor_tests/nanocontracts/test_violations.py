@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from hathor.nanocontracts import Blueprint, public
 from hathor.nanocontracts.context import Context
 from hathor.nanocontracts.exception import NCFail
@@ -35,7 +38,7 @@ class ViolationsTestCase(BlueprintTestCase):
 
         self.blueprint_id = self.gen_random_blueprint_id()
         self.contract_id = self.gen_random_contract_id()
-        self.nc_catalog.blueprints[self.blueprint_id] = MyBlueprint
+        self.blueprint_service.register_blueprint(self.blueprint_id, MyBlueprint)
         self.tx = self.get_genesis_tx()
         self.address = self.gen_random_address()
 

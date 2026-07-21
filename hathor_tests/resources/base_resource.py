@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from twisted.internet.defer import succeed
 from twisted.web import server
 from twisted.web.test.requesthelper import DummyRequest
@@ -19,7 +22,7 @@ class _BaseResourceTest:
                 unlock_wallet=unlock_wallet
             )
             self.manager.allow_mining_without_peers()
-            self.manager.daa.TEST_MODE = TestMode.TEST_ALL_WEIGHT
+            self.manager.daa_factory.TEST_MODE = TestMode.TEST_ALL_WEIGHT
 
         def tearDown(self):
             return self.manager.stop()

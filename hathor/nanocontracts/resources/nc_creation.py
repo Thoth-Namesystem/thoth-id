@@ -1,18 +1,9 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import Field
 from twisted.web.http import Request
@@ -38,7 +29,7 @@ class NCCreationResource(Resource):
         super().__init__()
         self.manager = manager
         self.tx_storage = self.manager.tx_storage
-        assert self.tx_storage.indexes is not None
+        self.bp_service = self.manager.blueprint_service
         self.nc_creation_index = self.tx_storage.indexes.nc_creation
         self.nc_history_index = self.tx_storage.indexes.nc_history
         self.bp_history_index = self.tx_storage.indexes.blueprint_history
@@ -181,7 +172,7 @@ class NCCreationResource(Resource):
         if tx is not None:
             nano_header = tx.get_nano_header()
             blueprint_id = BlueprintId(VertexId(nano_header.nc_id))
-            blueprint_class = self.tx_storage.get_blueprint_class(blueprint_id)
+            blueprint_class = self.bp_service.get_blueprint_class(blueprint_id)
             created_at = tx.timestamp
 
         else:
@@ -191,7 +182,7 @@ class NCCreationResource(Resource):
                 return None
 
             blueprint_id = nc_storage.get_blueprint_id()
-            blueprint_class = self.tx_storage.get_blueprint_class(blueprint_id)
+            blueprint_class = self.bp_service.get_blueprint_class(blueprint_id)
             created_at = 0
 
         assert self.nc_history_index is not None
@@ -206,10 +197,10 @@ class NCCreationResource(Resource):
 
 
 class NCCreationParams(QueryParams):
-    before: str | None
-    after: str | None
+    before: str | None = None
+    after: str | None = None
     count: int = Field(default=10, le=100)
-    search: str | None
+    search: str | None = None
     order: SortOrder = SortOrder.DESC
 
 
@@ -223,7 +214,7 @@ class NCCreationItem(Response):
 
 
 class NCCreationResponse(Response):
-    success: bool = Field(default=True, const=True)
+    success: Literal[True] = True
     nc_creation_txs: list[NCCreationItem]
     before: str | None
     after: str | None

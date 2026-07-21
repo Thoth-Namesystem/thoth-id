@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from typing import Iterator
 
 from hathor.graphviz import GraphvizVisualizer
@@ -11,7 +14,7 @@ from hathor_tests.utils import add_custom_tx, gen_custom_tx
 
 
 class SoftVoidedTestCase(SimulatorTestCase):
-    seed_config = 5988775361793628169
+    seed_config = 1
 
     def assertNoParentsAreSoftVoided(self, tx: BaseTransaction) -> None:
         assert tx.storage is not None

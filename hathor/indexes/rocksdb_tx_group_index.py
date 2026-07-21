@@ -1,19 +1,8 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from abc import abstractmethod
-from typing import Callable, Iterator, Optional, Sized, TypeVar
+from typing import Any, Callable, Generic, Iterator, Optional, Sized, TypeVar
 
 import rocksdb
 from structlog import get_logger
@@ -31,7 +20,7 @@ KT = TypeVar('KT', bound=Sized)
 GROUP_COUNT_VALUE_SIZE = 4  # in bytes
 
 
-class _RocksDBTxGroupStatsIndex(RocksDBIndexUtils):
+class _RocksDBTxGroupStatsIndex(RocksDBIndexUtils, Generic[KT]):
     def __init__(
         self,
         db: rocksdb.DB,
@@ -157,7 +146,7 @@ class RocksDBTxGroupIndex(TxGroupIndex[KT], RocksDBIndexUtils):
         reverse: bool = False
     ) -> Iterator[bytes]:
         self.log.debug('seek to', key=key)
-        it = self._db.iterkeys(self._cf)
+        it: Any = self._db.iterkeys(self._cf)
         if reverse:
             it = reversed(it)
             # when reversed we increment the key by 1, which effectively goes to the end of a prefix
@@ -191,7 +180,7 @@ class RocksDBTxGroupIndex(TxGroupIndex[KT], RocksDBIndexUtils):
 
     @override
     def get_latest_tx_timestamp(self, key: KT) -> int | None:
-        it = self._db.iterkeys(self._cf)
+        it: Any = self._db.iterkeys(self._cf)
         it = reversed(it)
         # when reversed we increment the key by 1, which effectively goes to the end of a prefix
         it.seek_for_prev(incr_key(self._to_rocksdb_key(key)))

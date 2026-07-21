@@ -1,16 +1,5 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from enum import Enum
 from typing import TYPE_CHECKING, Optional
@@ -84,13 +73,13 @@ def simulate_single_chain_blocks_and_transactions(
     simulator.run(60)
 
     tx = gen_new_tx(manager, address, 1000)
-    tx.weight = manager.daa.minimum_tx_weight(tx)
+    tx.weight = manager.daa_factory.minimum_tx_weight(tx)
     tx.update_hash()
     assert manager.propagate_tx(tx)
     simulator.run(60)
 
     tx = gen_new_tx(manager, address, 2000)
-    tx.weight = manager.daa.minimum_tx_weight(tx)
+    tx.weight = manager.daa_factory.minimum_tx_weight(tx)
     tx.update_hash()
     assert manager.propagate_tx(tx)
     simulator.run(60)
@@ -183,7 +172,7 @@ def simulate_invalid_mempool_transaction(simulator: 'Simulator', manager: 'Hatho
     balance_per_address = manager.wallet.get_balance_per_address(settings.HATHOR_TOKEN_UID)
     assert balance_per_address[address] == 6400
     tx = gen_new_tx(manager, address, 1000)
-    tx.weight = manager.daa.minimum_tx_weight(tx)
+    tx.weight = manager.daa_factory.minimum_tx_weight(tx)
     tx.update_hash()
     assert manager.propagate_tx(tx)
     simulator.run(60)
@@ -200,7 +189,7 @@ def simulate_invalid_mempool_transaction(simulator: 'Simulator', manager: 'Hatho
     simulator.run(60)
 
     # the transaction should have been removed from the mempool and the storage after the re-org
-    assert tx not in manager.tx_storage.iter_mempool_from_best_index()
+    assert tx not in manager.tx_storage.iter_mempool()
     assert not manager.tx_storage.transaction_exists(tx.hash)
     assert bool(tx.get_metadata().voided_by)
     balance_per_address = manager.wallet.get_balance_per_address(settings.HATHOR_TOKEN_UID)
@@ -224,7 +213,7 @@ def simulate_empty_script(simulator: 'Simulator', manager: 'HathorManager') -> O
     tx1 = gen_new_tx(manager, address, 1000)
     original_script = tx1.outputs[1].script
     tx1.outputs[1].script = b''
-    tx1.weight = manager.daa.minimum_tx_weight(tx1)
+    tx1.weight = manager.daa_factory.minimum_tx_weight(tx1)
     tx1.update_hash()
     assert manager.propagate_tx(tx1)
     simulator.run(60)
@@ -232,7 +221,7 @@ def simulate_empty_script(simulator: 'Simulator', manager: 'HathorManager') -> O
     tx2 = gen_new_tx(manager, address, 1000)
     tx2.inputs = [TxInput(tx_id=tx1.hash, index=1, data=b'\x51')]
     tx2.outputs = [TxOutput(value=1000, script=original_script)]
-    tx2.weight = manager.daa.minimum_tx_weight(tx2)
+    tx2.weight = manager.daa_factory.minimum_tx_weight(tx2)
     tx2.update_hash()
     assert manager.propagate_tx(tx2)
     simulator.run(60)
@@ -264,7 +253,7 @@ def simulate_custom_script(simulator: 'Simulator', manager: 'HathorManager') -> 
     s.addOpcode(Opcode.OP_1)
     original_script = tx1.outputs[1].script
     tx1.outputs[1].script = s.data
-    tx1.weight = manager.daa.minimum_tx_weight(tx1)
+    tx1.weight = manager.daa_factory.minimum_tx_weight(tx1)
     tx1.update_hash()
     assert manager.propagate_tx(tx1)
     simulator.run(60)
@@ -272,7 +261,7 @@ def simulate_custom_script(simulator: 'Simulator', manager: 'HathorManager') -> 
     tx2 = gen_new_tx(manager, address, 1000)
     tx2.inputs = [TxInput(tx_id=tx1.hash, index=1, data=bytes([len(some_data)]) + some_data)]
     tx2.outputs = [TxOutput(value=1000, script=original_script)]
-    tx2.weight = manager.daa.minimum_tx_weight(tx2)
+    tx2.weight = manager.daa_factory.minimum_tx_weight(tx2)
     tx2.update_hash()
     assert manager.propagate_tx(tx2)
     simulator.run(60)
@@ -284,6 +273,7 @@ def simulate_custom_script(simulator: 'Simulator', manager: 'HathorManager') -> 
 
 
 def simulate_nc_events(simulator: 'Simulator', manager: 'HathorManager') -> Optional['DAGArtifacts']:
+    from hathor.simulator.utils import create_dag_builder
     from hathor.nanocontracts import Blueprint, NCFail, public
     from hathor.nanocontracts.catalog import NCBlueprintCatalog
     from hathor.nanocontracts.context import Context
@@ -316,11 +306,11 @@ def simulate_nc_events(simulator: 'Simulator', manager: 'HathorManager') -> Opti
 
     blueprint1_id = b'\x11' * 32
     blueprint2_id = b'\x22' * 32
-    manager.tx_storage.nc_catalog = NCBlueprintCatalog({
+    manager.blueprint_service.register_blueprints({
         blueprint1_id: TestEventsBlueprint1,
         blueprint2_id: TestEventsBlueprint2,
     })
-    dag_builder = _create_dag_builder(manager)
+    dag_builder = create_dag_builder(manager)
     artifacts = dag_builder.build_from_str(f'''
         blockchain genesis b[1..3]
         b1 < dummy
@@ -354,6 +344,7 @@ def simulate_nc_events(simulator: 'Simulator', manager: 'HathorManager') -> Opti
 
 
 def simulate_nc_events_reorg(simulator: 'Simulator', manager: 'HathorManager') -> Optional['DAGArtifacts']:
+    from hathor.simulator.utils import create_dag_builder
     from hathor.nanocontracts import Blueprint, public
     from hathor.nanocontracts.catalog import NCBlueprintCatalog
     from hathor.nanocontracts.context import Context
@@ -364,8 +355,8 @@ def simulate_nc_events_reorg(simulator: 'Simulator', manager: 'HathorManager') -
             self.syscall.emit_event(b'test event on initialize 1')
 
     blueprint1_id = b'\x11' * 32
-    manager.tx_storage.nc_catalog = NCBlueprintCatalog({blueprint1_id: TestEventsBlueprint1})
-    dag_builder = _create_dag_builder(manager)
+    manager.blueprint_service.register_blueprint(blueprint1_id, TestEventsBlueprint1)
+    dag_builder = create_dag_builder(manager)
 
     # 2 reorgs happen, so nc1.initialize() gets executed 3 times, once in block a2 and twice in block b2
     artifacts = dag_builder.build_from_str(f'''
@@ -385,26 +376,3 @@ def simulate_nc_events_reorg(simulator: 'Simulator', manager: 'HathorManager') -
     simulator.run(1)
 
     return artifacts
-
-
-def _create_dag_builder(manager: 'HathorManager') -> 'DAGBuilder':
-    from mnemonic import Mnemonic
-
-    from hathor.dag_builder import DAGBuilder
-    from hathor.wallet import HDWallet
-
-    seed = ('coral light army gather adapt blossom school alcohol coral light army gather '
-            'adapt blossom school alcohol coral light army gather adapt blossom school awesome')
-
-    def create_random_hd_wallet() -> HDWallet:
-        m = Mnemonic('english')
-        words = m.to_mnemonic(manager.rng.randbytes(32))
-        hd = HDWallet(words=words)
-        hd._manually_initialize()
-        return hd
-
-    return DAGBuilder.from_manager(
-        manager=manager,
-        genesis_words=seed,
-        wallet_factory=create_random_hd_wallet,
-    )

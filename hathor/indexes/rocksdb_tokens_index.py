@@ -1,20 +1,9 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Iterator, NamedTuple, Optional, cast
+from typing import TYPE_CHECKING, Any, Iterator, NamedTuple, Optional, cast
 
 from structlog import get_logger
 from typing_extensions import assert_never, override
@@ -29,17 +18,13 @@ from hathor.indexes.rocksdb_utils import (
 )
 from hathor.indexes.tokens_index import TokenIndexInfo, TokensIndex, TokenUtxoInfo
 from hathor.nanocontracts.runner.index_records import IndexRecordType, UpdateAuthoritiesRecord
-from hathor.nanocontracts.types import (
-    NCAcquireAuthorityAction,
-    NCDepositAction,
-    NCGrantAuthorityAction,
-    NCWithdrawalAction,
-)
 from hathor.transaction import BaseTransaction, Transaction
 from hathor.transaction.base_transaction import TxVersion
 from hathor.transaction.token_info import TokenVersion
 from hathor.types import TokenUid
 from hathor.util import collect_n, json_dumpb, json_loadb
+from hathorlib.nanocontracts.types import NCActionType
+from hathorlib.token_amount import SignedAmount, UnsignedAmount
 
 if TYPE_CHECKING:  # pragma: no cover
     import rocksdb
@@ -235,7 +220,7 @@ class RocksDBTokensIndex(TokensIndex, RocksDBIndexUtils):
         name: str | None,
         symbol: str | None,
         version: TokenVersion | None,
-        total: int = 0,
+        total: UnsignedAmount = 0,
         n_contracts_can_mint: int = 0,
         n_contracts_can_melt: int = 0,
     ) -> None:
@@ -270,7 +255,7 @@ class RocksDBTokensIndex(TokensIndex, RocksDBIndexUtils):
         name: str,
         symbol: str,
         version: TokenVersion,
-        total: int,
+        total: UnsignedAmount,
     ) -> None:
         self.create_token_info(
             token_uid=token_uid,
@@ -335,7 +320,7 @@ class RocksDBTokensIndex(TokensIndex, RocksDBIndexUtils):
             name=self._settings.HATHOR_TOKEN_NAME,
             symbol=self._settings.HATHOR_TOKEN_SYMBOL,
             version=TokenVersion.NATIVE,
-            total=self._settings.GENESIS_TOKENS,
+            total=self._settings.GENESIS_TOKEN_ATOMIC_UNITS,
         )
 
     def _get_value_info(self, token_uid: bytes, *, create_default: bool = True) -> _InfoDict:
@@ -352,7 +337,7 @@ class RocksDBTokensIndex(TokensIndex, RocksDBIndexUtils):
         return dict_info
 
     @override
-    def add_to_total(self, token_uid: bytes, amount: int) -> None:
+    def add_to_total(self, token_uid: bytes, amount: SignedAmount) -> None:
         dict_info = self._get_value_info(token_uid, create_default=True)
         dict_info.total += amount
         key_info = self._to_key_info(token_uid)
@@ -430,20 +415,20 @@ class RocksDBTokensIndex(TokensIndex, RocksDBIndexUtils):
         if tx.is_nano_contract():
             assert isinstance(tx, Transaction)
             nano_header = tx.get_nano_header()
-            ctx = nano_header.get_context()
-            for action in ctx.__all_actions__:
-                match action:
-                    case NCDepositAction():
-                        self.add_to_total(action.token_uid, action.amount)
-                    case NCWithdrawalAction():
-                        self.add_to_total(action.token_uid, -action.amount)
-                    case NCGrantAuthorityAction() | NCAcquireAuthorityAction():
+            for action in nano_header.nc_actions:
+                token_uid = tx.get_token_uid(action.token_index)
+                match action.type:
+                    case NCActionType.DEPOSIT:
+                        self.add_to_total(token_uid, action.amount)
+                    case NCActionType.WITHDRAWAL:
+                        self.add_to_total(token_uid, -action.amount)
+                    case NCActionType.GRANT_AUTHORITY | NCActionType.ACQUIRE_AUTHORITY:
                         # These actions don't affect the token balance but do affect the counters
                         # of contracts holding token authorities. They are handled directly by
                         # the IndexesManager via index update records created by the Runner.
                         pass
                     case _:
-                        assert_never(action)
+                        assert_never(action.type)
 
     def remove_tx(self, tx: BaseTransaction) -> None:
         for tx_input in tx.inputs:
@@ -467,19 +452,19 @@ class RocksDBTokensIndex(TokensIndex, RocksDBIndexUtils):
         if tx.is_nano_contract():
             assert isinstance(tx, Transaction)
             nano_header = tx.get_nano_header()
-            ctx = nano_header.get_context()
-            for action in ctx.__all_actions__:
-                match action:
-                    case NCDepositAction():
-                        self.add_to_total(action.token_uid, -action.amount)
-                    case NCWithdrawalAction():
-                        self.add_to_total(action.token_uid, action.amount)
-                    case NCGrantAuthorityAction() | NCAcquireAuthorityAction():
+            for action in nano_header.nc_actions:
+                token_uid = tx.get_token_uid(action.token_index)
+                match action.type:
+                    case NCActionType.DEPOSIT:
+                        self.add_to_total(token_uid, -action.amount)
+                    case NCActionType.WITHDRAWAL:
+                        self.add_to_total(token_uid, action.amount)
+                    case NCActionType.GRANT_AUTHORITY | NCActionType.ACQUIRE_AUTHORITY:
                         # These actions don't affect the nc token balance,
                         # so no need for any special handling on the index.
                         pass
                     case _:
-                        assert_never(action)
+                        assert_never(action.type)
 
     def iter_all_tokens(self) -> Iterator[tuple[bytes, TokenIndexInfo]]:
         self.log.debug('seek to start')
@@ -542,7 +527,7 @@ class RocksDBTokensIndex(TokensIndex, RocksDBIndexUtils):
                            *, reverse: bool = False) -> Iterator[bytes]:
         """ Iterate over all transactions of a token, by default from oldest to newest.
         """
-        it = self._db.iterkeys(self._cf)
+        it: Any = self._db.iterkeys(self._cf)
         seek_key = self._to_key_txs(token_uid, from_tx)
         self.log.debug('seek to', token_uid=token_uid.hex(), key=seek_key.hex())
         if reverse:
@@ -610,8 +595,8 @@ class RocksDBTokenIndexInfo(TokenIndexInfo):
         assert self._info.version is not None
         return self._info.version
 
-    def get_total(self) -> int:
-        return self._info.total
+    def get_total(self) -> UnsignedAmount:
+        return UnsignedAmount(self._info.total)
 
     def _iter_authority_utxos(self, *, is_mint: bool) -> Iterator[TokenUtxoInfo]:
         it = self._index._db.iterkeys(self._index._cf)

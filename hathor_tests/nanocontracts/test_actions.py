@@ -1,16 +1,5 @@
-#  Copyright 2025 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import dataclasses
 from typing import Any
@@ -18,9 +7,9 @@ from unittest.mock import patch
 
 import pytest
 
+from hathor.feature_activation.utils import Features
 from hathor.indexes.tokens_index import TokensIndex
 from hathor.nanocontracts import HATHOR_TOKEN_UID, NC_EXECUTION_FAIL_ID, Blueprint, Context, public
-from hathor.nanocontracts.catalog import NCBlueprintCatalog
 from hathor.nanocontracts.exception import NCInvalidAction
 from hathor.nanocontracts.nc_exec_logs import NCLogConfig
 from hathor.nanocontracts.storage.contract_storage import Balance, BalanceKey
@@ -29,12 +18,13 @@ from hathor.transaction import Block, Transaction, TxInput, TxOutput
 from hathor.transaction.exceptions import InvalidToken
 from hathor.transaction.headers.nano_header import NanoHeaderAction
 from hathor.util import not_none
-from hathor.verification.nano_header_verifier import MAX_ACTIONS_LEN
 from hathor.verification.verification_params import VerificationParams
 from hathor.wallet import HDWallet
 from hathor_tests import unittest
 from hathor_tests.dag_builder.builder import TestDAGBuilder
 from hathor_tests.nanocontracts.utils import assert_nc_failure_reason, set_nano_header
+from hathorlib.nanocontracts.verification import MAX_ACTIONS_LEN
+from hathorlib.token_amount import SignedAmount
 
 
 class MyBlueprint(Blueprint):
@@ -80,10 +70,7 @@ class TestActions(unittest.TestCase):
         self.bp_id = b'1' * 32
         self.manager = self.create_peer('unittests', nc_log_config=NCLogConfig.FAILED, wallet_index=True)
 
-        self.manager.tx_storage.nc_catalog = NCBlueprintCatalog({
-            self.bp_id: MyBlueprint
-        })
-        assert self.manager.tx_storage.indexes is not None
+        self.manager.blueprint_service.register_blueprint(self.bp_id, MyBlueprint)
         self.tokens_index: TokensIndex = not_none(self.manager.tx_storage.indexes.tokens)
         self.nc_seqnum = 0
 
@@ -118,9 +105,9 @@ class TestActions(unittest.TestCase):
             Transaction,
         )
         best_block = self.manager.tx_storage.get_best_block()
-        self.verification_params = VerificationParams.default_for_mempool(
-            enable_nano=True,
+        self.verification_params = VerificationParams.for_mempool(
             best_block=best_block,
+            features=Features.all_enabled()
         )
 
         # We finish a manual setup of tx1, so it can be used directly in verification methods.
@@ -132,7 +119,9 @@ class TestActions(unittest.TestCase):
         self.tka_balance_key = BalanceKey(nc_id=self.tx0.hash, token_uid=self.tka.hash)
 
         # Initial state sanity check. 30 HTR are used to mint 3000 TKA.
-        self.initial_htr_total = self._settings.GENESIS_TOKENS + 10 * self._settings.INITIAL_TOKENS_PER_BLOCK - 30
+        self.initial_htr_total = (
+            self._settings.GENESIS_TOKEN_ATOMIC_UNITS + 10 * self._settings.INITIAL_TOKEN_ATOMIC_UNITS_PER_BLOCK - 30
+        )
         self.initial_tka_total = 3000
         self._assert_token_index(htr_total=self.initial_htr_total, tka_total=self.initial_tka_total)
 
@@ -163,8 +152,8 @@ class TestActions(unittest.TestCase):
         self,
         *,
         tx: Transaction,
-        update_htr_output: int | None = None,
-        update_tka_output: int | None = None,
+        update_htr_output: SignedAmount | None = None,
+        update_tka_output: SignedAmount | None = None,
         add_inputs: list[TxInput] | None = None,
         add_outputs: list[TxOutput] | None = None,
     ) -> None:
@@ -242,7 +231,7 @@ class TestActions(unittest.TestCase):
 
         # Check the token index.
         self._assert_token_index(
-            htr_total=self.initial_htr_total + self._settings.INITIAL_TOKENS_PER_BLOCK,
+            htr_total=self.initial_htr_total + self._settings.INITIAL_TOKEN_ATOMIC_UNITS_PER_BLOCK,
             tka_total=self.initial_tka_total,
         )
 
@@ -267,7 +256,7 @@ class TestActions(unittest.TestCase):
 
         # Check the token index.
         self._assert_token_index(
-            htr_total=self.initial_htr_total + self._settings.INITIAL_TOKENS_PER_BLOCK,
+            htr_total=self.initial_htr_total + self._settings.INITIAL_TOKEN_ATOMIC_UNITS_PER_BLOCK,
             tka_total=self.initial_tka_total,
         )
 
@@ -511,7 +500,7 @@ class TestActions(unittest.TestCase):
 
         # Check the token index.
         self._assert_token_index(
-            htr_total=self.initial_htr_total + 2 * self._settings.INITIAL_TOKENS_PER_BLOCK - 200,
+            htr_total=self.initial_htr_total + 2 * self._settings.INITIAL_TOKEN_ATOMIC_UNITS_PER_BLOCK - 200,
             tka_total=self.initial_tka_total + 20000,
         )
 
@@ -577,7 +566,7 @@ class TestActions(unittest.TestCase):
 
         # Check the token index.
         self._assert_token_index(
-            htr_total=self.initial_htr_total + 2 * self._settings.INITIAL_TOKENS_PER_BLOCK - 200,
+            htr_total=self.initial_htr_total + 2 * self._settings.INITIAL_TOKEN_ATOMIC_UNITS_PER_BLOCK - 200,
             tka_total=self.initial_tka_total + 20000,
         )
 
@@ -618,7 +607,7 @@ class TestActions(unittest.TestCase):
 
         # Check the token index.
         self._assert_token_index(
-            htr_total=self.initial_htr_total + 2 * self._settings.INITIAL_TOKENS_PER_BLOCK - 200,
+            htr_total=self.initial_htr_total + 2 * self._settings.INITIAL_TOKEN_ATOMIC_UNITS_PER_BLOCK - 200,
             tka_total=self.initial_tka_total + 20000,
         )
 
@@ -666,7 +655,7 @@ class TestActions(unittest.TestCase):
 
         # Check the token index.
         self._assert_token_index(
-            htr_total=self.initial_htr_total + 2 * self._settings.INITIAL_TOKENS_PER_BLOCK + 5,
+            htr_total=self.initial_htr_total + 2 * self._settings.INITIAL_TOKEN_ATOMIC_UNITS_PER_BLOCK + 5,
             tka_total=self.initial_tka_total - 500,
         )
 
@@ -707,7 +696,7 @@ class TestActions(unittest.TestCase):
 
         # Check the token index.
         self._assert_token_index(
-            htr_total=self.initial_htr_total + 2 * self._settings.INITIAL_TOKENS_PER_BLOCK + 5,
+            htr_total=self.initial_htr_total + 2 * self._settings.INITIAL_TOKEN_ATOMIC_UNITS_PER_BLOCK + 5,
             tka_total=self.initial_tka_total - 500,
         )
 
@@ -748,7 +737,7 @@ class TestActions(unittest.TestCase):
 
         # Check the token index.
         self._assert_token_index(
-            htr_total=self.initial_htr_total + 2 * self._settings.INITIAL_TOKENS_PER_BLOCK + 5,
+            htr_total=self.initial_htr_total + 2 * self._settings.INITIAL_TOKEN_ATOMIC_UNITS_PER_BLOCK + 5,
             tka_total=self.initial_tka_total - 500,
         )
 
@@ -771,7 +760,7 @@ class TestActions(unittest.TestCase):
         )
 
         with pytest.raises(NCInvalidAction) as e:
-            self.manager.verification_service.verifiers.nano_header.verify_actions(self.tx1)
+            self.manager.verification_service.verifiers.nano_header.verify_actions(self.tx1, self.verification_params)
         assert str(e.value) == f'conflicting actions for token {self.tka.hash_hex}'
 
     def test_acquire_and_grant_same_token_not_allowed(self) -> None:
@@ -791,7 +780,7 @@ class TestActions(unittest.TestCase):
         self._set_nano_header(tx=self.tx1, nc_actions=nc_actions)
 
         with pytest.raises(NCInvalidAction) as e:
-            self.manager.verification_service.verifiers.nano_header.verify_actions(self.tx1)
+            self.manager.verification_service.verifiers.nano_header.verify_actions(self.tx1, self.verification_params)
         assert str(e.value) == 'conflicting actions for token 00'
 
     def test_conflicting_actions(self) -> None:
@@ -860,7 +849,9 @@ class TestActions(unittest.TestCase):
 
         with patch('hathor.transaction.headers.NanoHeader.get_actions', lambda _: fake_actions):
             with pytest.raises(NCInvalidAction) as e:
-                self.manager.verification_service.verifiers.nano_header.verify_actions(self.tx1)
+                self.manager.verification_service.verifiers.nano_header.verify_actions(
+                    self.tx1, self.verification_params
+                )
         assert str(e.value) == f'DEPOSIT action requires token {fake_token_uid.hex()} in tokens list'
 
     def _test_invalid_unknown_authority(self, action_type: NCActionType) -> None:

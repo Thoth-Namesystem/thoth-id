@@ -1,16 +1,5 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import base64
 from json import JSONDecodeError
@@ -20,7 +9,6 @@ from unittest.mock import Mock
 from twisted.internet.testing import StringTransport
 
 from hathor.conf import HathorSettings as get_settings
-from hathor.conf.settings import HathorSettings
 from hathor.feature_activation.feature import Feature
 from hathor.feature_activation.model.criteria import Criteria
 from hathor.feature_activation.settings import Settings as FeatureSettings
@@ -35,9 +23,8 @@ from hathor_tests.simulation.base import SimulatorTestCase
 
 class MiningSimulationTest(SimulatorTestCase):
     def test_signal_bits_in_mining(self) -> None:
-        settings_dict = get_settings()._asdict()
-        settings_dict.update(
-            FEATURE_ACTIVATION=FeatureSettings(
+        settings = get_settings().model_copy(update={
+            'FEATURE_ACTIVATION': FeatureSettings(
                 evaluation_interval=4,
                 default_threshold=3,
                 features={
@@ -56,8 +43,7 @@ class MiningSimulationTest(SimulatorTestCase):
                     ),
                 }
             )
-        )
-        settings = HathorSettings(**settings_dict)
+        })
 
         builder = self.simulator.get_default_builder() \
             .set_settings(settings) \

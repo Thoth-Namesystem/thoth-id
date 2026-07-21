@@ -1,16 +1,5 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from json import JSONDecodeError
 from typing import Any, Optional
@@ -21,7 +10,7 @@ from twisted.web.http import Request
 from hathor._openapi.register import register_resource
 from hathor.api_util import Resource, get_args, get_missing_params_msg, set_cors
 from hathor.conf.get_settings import get_global_settings
-from hathor.crypto.util import decode_address
+from hathor.crypto.util import decode_address_strict
 from hathor.transaction.storage.exceptions import TransactionDoesNotExist
 from hathor.util import json_dumpb, json_loadb
 from hathor.wallet.exceptions import InvalidAddress
@@ -40,10 +29,10 @@ class AddressHistoryResource(Resource):
     def __init__(self, manager):
         self.manager = manager
         self._log = logger.new()
-        settings = get_global_settings()
+        self._settings = get_global_settings()
         # XXX: copy the parameters that are needed so tests can more easily tweak them
-        self.max_tx_addresses_history = settings.MAX_TX_ADDRESSES_HISTORY
-        self.max_inputs_outputs_address_history = settings.MAX_INPUTS_OUTPUTS_ADDRESS_HISTORY
+        self.max_tx_addresses_history = self._settings.MAX_TX_ADDRESSES_HISTORY
+        self.max_inputs_outputs_address_history = self._settings.MAX_INPUTS_OUTPUTS_ADDRESS_HISTORY
 
     # TODO add openapi docs for this API
     def render_POST(self, request: Request) -> bytes:
@@ -71,7 +60,24 @@ class AddressHistoryResource(Resource):
         addresses = post_data['addresses']
         assert isinstance(addresses, list)
 
-        return self.get_address_history(addresses, post_data.get('hash'), post_data.get('tx_version'))
+        # Validate and parse tx_version parameter if provided
+        allowed_tx_versions = None
+        if 'tx_version' in post_data:
+            tx_version_raw = post_data['tx_version']
+            # Handle both list/set and single values
+            if not isinstance(tx_version_raw, (list, set)):
+                tx_version_raw = [tx_version_raw]
+
+            try:
+                allowed_tx_versions = set(int(v) for v in tx_version_raw)
+            except (ValueError, TypeError) as e:
+                request.setResponseCode(400)
+                return json_dumpb({
+                    'success': False,
+                    'message': f'Invalid tx_version parameter: must be integer(s), got {e}'
+                })
+
+        return self.get_address_history(addresses, post_data.get('hash'), allowed_tx_versions)
 
     def render_GET(self, request: Request) -> bytes:
         """ GET request for /thin_wallet/address_history/
@@ -136,11 +142,16 @@ class AddressHistoryResource(Resource):
             ref_hash = raw_args[b'hash'][0].decode('utf-8')
 
         allowed_tx_versions_arg = raw_args.get(b'tx_version[]', None)
-        allowed_tx_versions = (
-            set([int(tx_version.decode('utf-8')) for tx_version in allowed_tx_versions_arg])
-            if allowed_tx_versions_arg is not None
-            else None
-        )
+        allowed_tx_versions = None
+        if allowed_tx_versions_arg is not None:
+            try:
+                allowed_tx_versions = set([int(tx_version.decode('utf-8')) for tx_version in allowed_tx_versions_arg])
+            except ValueError as e:
+                request.setResponseCode(400)
+                return json_dumpb({
+                    'success': False,
+                    'message': f'Invalid tx_version parameter: {e}'
+                })
         return self.get_address_history(
             [address.decode('utf-8') for address in addresses],
             ref_hash,
@@ -187,7 +198,7 @@ class AddressHistoryResource(Resource):
         seen: set[bytes] = set()
         for idx, address in enumerate(addresses):
             try:
-                decode_address(address)
+                decode_address_strict(address, settings=self._settings)
             except InvalidAddress:
                 return json_dumpb({
                     'success': False,
@@ -383,6 +394,14 @@ AddressHistoryResource.openapi = {
                                     'value': {
                                         'success': False,
                                         'message': 'The address xx is invalid',
+                                    }
+                                },
+                                'error_invalid_tx_version': {
+                                    'summary': 'Invalid tx_version parameter',
+                                    'value': {
+                                        'success': False,
+                                        'message': "Invalid tx_version parameter: invalid literal for int() "
+                                                   "with base 10: 'INVALID'",
                                     }
                                 },
                             }

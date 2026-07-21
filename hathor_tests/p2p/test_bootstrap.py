@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from typing import Callable
 
 from twisted.internet.defer import Deferred
@@ -57,9 +60,9 @@ class BootstrapTestCase(unittest.TestCase):
             pubsub,
             True,
             self.rng,
-            True,
             enable_ipv6=False,
-            disable_ipv4=False
+            disable_ipv4=False,
+            slots_manager=None  # type: ignore
         )
 
         host_ports1 = [
@@ -92,9 +95,9 @@ class BootstrapTestCase(unittest.TestCase):
             pubsub,
             True,
             self.rng,
-            True,
             enable_ipv6=False,
-            disable_ipv4=False
+            disable_ipv4=False,
+            slots_manager=None  # type: ignore
         )
 
         bootstrap_a = [

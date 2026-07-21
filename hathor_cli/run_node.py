@@ -1,16 +1,5 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import os
 import sys
@@ -49,6 +38,7 @@ def temp_fifo(filename: str, tempdir: str | None) -> Iterator[None]:
 class RunNode:
     UNSAFE_ARGUMENTS: list[tuple[str, Callable[['RunNodeArgs'], bool]]] = [
         ('--test-mode-tx-weight', lambda args: bool(args.test_mode_tx_weight)),
+        ('--test-mode-block-weight', lambda args: bool(args.test_mode_block_weight)),
         ('--enable-crash-api', lambda args: bool(args.enable_crash_api)),
         ('--sync-bridge', lambda args: bool(args.sync_bridge)),
         ('--sync-v1-only', lambda args: bool(args.sync_v1_only)),
@@ -87,6 +77,8 @@ class RunNode:
 
         parser.add_argument('--test-mode-tx-weight', action='store_true',
                             help='Reduces tx weight to 1 for testing purposes')
+        parser.add_argument('--test-mode-block-weight', action='store_true',
+                            help='Reduces block weight to 1 for testing purposes')
         parser.add_argument('--dns', action='append', help='Seed DNS')
         parser.add_argument('--peer', help='json file with peer info')
         parser.add_argument('--sysctl',
@@ -277,7 +269,10 @@ class RunNode:
             import sentry_sdk
             from structlog_sentry import SentryProcessor  # noqa: F401
         except ModuleNotFoundError:
-            self.log.error('Please use `poetry install -E sentry` for enabling Sentry.')
+            self.log.error(
+                'Please install the `sentry` extra (for example, `poetry install -E sentry` or'
+                ' `uv sync --extra sentry`) to enable Sentry.'
+            )
             sys.exit(-3)
 
         import hathor
@@ -499,7 +494,7 @@ class RunNode:
             ]))
 
     def __init__(self, *, argv=None):
-        from hathor.conf import (
+        from hathorlib.conf import (
             LOCALNET_SETTINGS_FILEPATH,
             NANO_TESTNET_SETTINGS_FILEPATH,
             TESTNET_INDIA_SETTINGS_FILEPATH,
@@ -586,7 +581,7 @@ class RunNode:
 
     def _parse_args_obj(self, args: dict[str, Any]) -> 'RunNodeArgs':
         from hathor_cli.run_node_args import RunNodeArgs
-        return RunNodeArgs.parse_obj(args)
+        return RunNodeArgs.model_validate(args)
 
     def run(self) -> None:
         self.reactor.run()

@@ -1,22 +1,15 @@
-# Copyright 2025 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
+from unittest.mock import patch
 
 import pytest
 
 from hathor import Blueprint, Context, ContractId, NCActionType, public
 from hathor.exception import InvalidNewTransaction
 from hathor.nanocontracts import NC_EXECUTION_FAIL_ID
+from hathor.nanocontracts.runner import Runner
+from hathor.nanocontracts.storage.contract_storage import Balance
 from hathor.nanocontracts.utils import derive_child_token_id
 from hathor.transaction import Block, Transaction, TxInput, TxOutput
 from hathor.transaction.headers import FeeHeader
@@ -62,7 +55,7 @@ class FeeTokensTestCase(BlueprintTestCase):
         self.dag_builder = TestDAGBuilder.from_manager(self.manager)
 
     def test_postponed_verification_success(self) -> None:
-        """Postponed verification means running verify_sum on NC execution-time instead of verification-time."""
+        """Postponed verification: run verify_transparent_balance at NC execution-time, not verification-time."""
         artifacts = self.dag_builder.build_from_str(f'''
             blockchain genesis b[1..12]
             b10 < dummy
@@ -102,6 +95,27 @@ class FeeTokensTestCase(BlueprintTestCase):
         assert tx2.get_metadata().first_block == b12.hash
         assert tx2.get_metadata().nc_execution == NCExecutionState.SUCCESS
         assert tx2.get_metadata().voided_by is None
+
+    def test_commit_failure_is_fatal_and_not_converted_to_nc_failure(self) -> None:
+        artifacts = self.dag_builder.build_from_str(f'''
+            blockchain genesis b[1..11]
+            b10 < dummy
+
+            tx1.nc_id = "{self.blueprint_id.hex()}"
+            tx1.nc_method = initialize()
+            tx1.nc_deposit = 1 HTR
+
+            tx1 <-- b11
+        ''')
+
+        with patch.object(
+            Runner,
+            'commit_pending_changes',
+            side_effect=RuntimeError('critical commit failure'),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                artifacts.propagate_with(self.manager, up_to='b11')
+            assert exc_info.value.code == -1
 
     def test_postponed_verification_fail_nonexistent(self) -> None:
         artifacts = self.dag_builder.build_from_str(f'''
@@ -145,7 +159,7 @@ class FeeTokensTestCase(BlueprintTestCase):
         assert tx2.get_metadata().voided_by == {NC_EXECUTION_FAIL_ID, tx2.hash}
 
         # It fails with a balance error caused by the withdrawal,
-        # because this check runs before the postponed verify_sum.
+        # because this check runs before the postponed verify_transparent_balance.
         assert_nc_failure_reason(
             manager=self.manager,
             tx_id=tx2.hash,
@@ -201,7 +215,75 @@ class FeeTokensTestCase(BlueprintTestCase):
             reason='InputOutputMismatch: Fee amount is different than expected. (amount=1, expected=0)',
         )
 
-    def test_postponed_verification_fail_less_htr_balance(self) -> None:
+    def test_postponed_token_verification_failure_does_not_contaminate_state(self) -> None:
+        artifacts = self.dag_builder.build_from_str(f'''
+            blockchain genesis b[1..13]
+            b10 < dummy
+
+            tx1.nc_id = "{self.blueprint_id.hex()}"
+            tx1.nc_method = initialize()
+            tx1.nc_deposit = 1 HTR
+
+            tx2.nc_id = tx1
+            tx2.nc_method = create_deposit_token()
+            tx2.fee = 1 HTR
+
+            tx3.nc_id = tx1
+            tx3.nc_method = nop()
+
+            tx1 < b11 < tx2 < b12 < tx3 < b13
+            tx1 <-- b11
+            tx2 <-- b12
+            tx3 <-- b13
+        ''')
+
+        b11, b12, b13 = artifacts.get_typed_vertices(('b11', 'b12', 'b13'), Block)
+        tx1, tx2, tx3 = artifacts.get_typed_vertices(('tx1', 'tx2', 'tx3'), Transaction)
+
+        dbt_id = derive_child_token_id(ContractId(tx1.hash), token_symbol='DBT')
+        tx2.tokens.append(dbt_id)
+
+        dbt_output = TxOutput(value=100, script=b'', token_data=1)
+        tx2.outputs.append(dbt_output)
+
+        dbt_withdraw = NanoHeaderAction(type=NCActionType.WITHDRAWAL, token_index=1, amount=100)
+        tx2_nano_header = tx2.get_nano_header()
+        tx2_nano_header.nc_actions.append(dbt_withdraw)
+
+        artifacts.propagate_with(self.manager, up_to='b11')
+        assert tx1.get_metadata().first_block == b11.hash
+        assert tx1.get_metadata().nc_execution == NCExecutionState.SUCCESS
+        assert tx1.get_metadata().voided_by is None
+
+        nc_storage_before = self.manager.get_best_block_nc_storage(tx1.hash)
+        expected_htr_balance = Balance(value=1, can_mint=False, can_melt=False)
+        assert nc_storage_before.get_balance(self._settings.HATHOR_TOKEN_UID) == expected_htr_balance
+
+        artifacts.propagate_with(self.manager, up_to='b12')
+        assert tx2.get_metadata().first_block == b12.hash
+        assert tx2.get_metadata().nc_execution == NCExecutionState.FAILURE
+        assert tx2.get_metadata().voided_by == {NC_EXECUTION_FAIL_ID, tx2.hash}
+
+        assert_nc_failure_reason(
+            manager=self.manager,
+            tx_id=tx2.hash,
+            block_id=b12.hash,
+            reason='InputOutputMismatch: Fee amount is different than expected. (amount=1, expected=0)',
+        )
+
+        nc_storage_after_fail = self.manager.get_best_block_nc_storage(tx1.hash)
+        assert nc_storage_after_fail.get_balance(self._settings.HATHOR_TOKEN_UID) == expected_htr_balance
+        assert not nc_storage_after_fail.has_token(dbt_id)
+
+        artifacts.propagate_with(self.manager, up_to='b13')
+        assert tx3.get_metadata().first_block == b13.hash
+        assert tx3.get_metadata().nc_execution == NCExecutionState.SUCCESS
+        assert tx3.get_metadata().voided_by is None
+
+        nc_storage_after_tx3 = self.manager.get_best_block_nc_storage(tx1.hash)
+        assert nc_storage_after_tx3.get_balance(self._settings.HATHOR_TOKEN_UID) == expected_htr_balance
+
+    def test_postponed_verification_fail_melt_htr(self) -> None:
         artifacts = self.dag_builder.build_from_str(f'''
             blockchain genesis b[1..12]
             b10 < dummy
@@ -241,16 +323,19 @@ class FeeTokensTestCase(BlueprintTestCase):
         assert tx1.get_metadata().nc_execution == NCExecutionState.SUCCESS
         assert tx1.get_metadata().voided_by is None
 
-        # Verification of minting HTR is not postponed, so it fails in verification-time.
-        with pytest.raises(Exception) as e:
-            artifacts.propagate_with(self.manager, up_to='tx2')
+        artifacts.propagate_with(self.manager, up_to='b12')
+        assert tx2.get_metadata().first_block == b12.hash
+        assert tx2.get_metadata().nc_execution == NCExecutionState.FAILURE
+        assert tx2.get_metadata().voided_by == {NC_EXECUTION_FAIL_ID, tx2.hash}
 
-        assert isinstance(e.value.__cause__, InvalidNewTransaction)
-        assert e.value.__cause__.args[0] == (
-            'full validation failed: HTR balance is different than expected. (amount=-1000, expected=0)'
+        assert_nc_failure_reason(
+            manager=self.manager,
+            tx_id=tx2.hash,
+            block_id=b12.hash,
+            reason='InputOutputMismatch: There\'s an invalid deficit of HTR. (amount=-1000, expected=0)',
         )
 
-    def test_postponed_verification_fail_more_htr_balance(self) -> None:
+    def test_postponed_verification_fail_mint_htr(self) -> None:
         artifacts = self.dag_builder.build_from_str(f'''
             blockchain genesis b[1..12]
             b10 < dummy
@@ -263,7 +348,7 @@ class FeeTokensTestCase(BlueprintTestCase):
             tx2.nc_method = create_fee_token()
             tx2.fee = 1 HTR
 
-            tx1 < tx2
+            tx1 < b11 < tx2
             tx1 <-- b11
             tx2 <-- b12
         ''')
@@ -288,16 +373,13 @@ class FeeTokensTestCase(BlueprintTestCase):
         assert tx1.get_metadata().nc_execution == NCExecutionState.SUCCESS
         assert tx1.get_metadata().voided_by is None
 
-        artifacts.propagate_with(self.manager, up_to='b12')
-        assert tx2.get_metadata().first_block == b12.hash
-        assert tx2.get_metadata().nc_execution == NCExecutionState.FAILURE
-        assert tx2.get_metadata().voided_by == {NC_EXECUTION_FAIL_ID, tx2.hash}
+        # Verification of minting HTR is not postponed, so it fails in verification-time.
+        with pytest.raises(Exception) as e:
+            artifacts.propagate_with(self.manager, up_to='tx2')
 
-        assert_nc_failure_reason(
-            manager=self.manager,
-            tx_id=tx2.hash,
-            block_id=b12.hash,
-            reason='InputOutputMismatch: HTR balance is different than expected. (amount=1000, expected=0)',
+        assert isinstance(e.value.__cause__, InvalidNewTransaction)
+        assert e.value.__cause__.args[0] == (
+            'full validation failed: There\'s an invalid surplus of HTR. (amount=1000, expected=0)'
         )
 
     def test_postponed_verification_pay_fee_with_fbt(self) -> None:

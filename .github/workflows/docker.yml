@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 # yamllint disable rule:line-length
 name: docker
 on: # yamllint disable-line rule:truthy
@@ -46,7 +49,7 @@ jobs:
         if: steps.prep.outputs.check-version
         env:
           VERSION: ${{ steps.prep.outputs.check-version }}
-        run: make check-custom
+        run: make check-version
       - name: Set up QEMU  # arm64 is not available natively
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx

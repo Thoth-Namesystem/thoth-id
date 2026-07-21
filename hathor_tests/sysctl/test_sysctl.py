@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from typing import cast
 from unittest.mock import MagicMock, patch
 
@@ -12,8 +15,8 @@ from hathor_tests import unittest
 
 
 class SysctlTest(unittest.TestCase):
-    # We need this patch because pydantic.validate_arguments fails when it gets a mock function.
-    @patch('hathor.sysctl.sysctl.validate_arguments', new=lambda x: x)  # type: ignore
+    # We need this patch because pydantic.validate_call fails when it gets a mock function.
+    @patch('hathor.sysctl.sysctl.validate_call', new=lambda x: x)  # type: ignore
     def setUp(self) -> None:
         super().setUp()
 

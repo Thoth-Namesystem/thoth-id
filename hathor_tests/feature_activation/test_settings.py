@@ -1,16 +1,6 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from typing import Any
 
 import pytest
@@ -121,15 +111,15 @@ def test_conflicting_bits(features: list[dict[str, Any]]) -> None:
         FeatureSettings(**data)  # type: ignore[arg-type]
 
     errors = e.value.errors()
-    assert errors[0]['msg'] == 'At least one pair of Features have the same bit configured for an overlapping ' \
-                               'interval: NOP_FEATURE_1 and NOP_FEATURE_2'
+    assert errors[0]['msg'] == 'Value error, At least one pair of Features have the same bit configured for an ' \
+                               'overlapping interval: NOP_FEATURE_1 and NOP_FEATURE_2'
 
 
 @pytest.mark.parametrize(
     ['evaluation_interval', 'default_threshold', 'error'],
     [
-        (10, 50, 'default_threshold must not be greater than evaluation_interval: 50 > 10'),
-        (100, 101, 'default_threshold must not be greater than evaluation_interval: 101 > 100')
+        (10, 50, 'Value error, default_threshold must not be greater than evaluation_interval: 50 > 10'),
+        (100, 101, 'Value error, default_threshold must not be greater than evaluation_interval: 101 > 100')
     ]
 )
 def test_default_threshold(evaluation_interval: int, default_threshold: int, error: str) -> None:

@@ -1,16 +1,5 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import time
 from enum import Enum
@@ -25,6 +14,7 @@ from twisted.protocols.basic import LineReceiver
 from twisted.python.failure import Failure
 
 from hathor.conf.settings import HathorSettings
+from hathor.p2p.connect_classes import ConnectionType
 from hathor.p2p.messages import ProtocolMessages
 from hathor.p2p.peer import PrivatePeer, PublicPeer, UnverifiedPeer
 from hathor.p2p.peer_endpoint import PeerEndpoint
@@ -108,7 +98,7 @@ class HathorProtocol:
         *,
         settings: HathorSettings,
         use_ssl: bool,
-        inbound: bool,
+        connection_type: ConnectionType,
     ) -> None:
         self._settings = settings
         self.my_peer = my_peer
@@ -120,8 +110,9 @@ class HathorProtocol:
         assert self.connections.reactor is not None
         self.reactor = self.connections.reactor
 
-        # Indicate whether it is an inbound connection (true) or an outbound connection (false).
-        self.inbound = inbound
+        # Type of Connection
+        # 0 == Outgoing, 1 == Incoming, 2 == Bootstrap
+        self.connection_type = connection_type
 
         # Maximum period without receiving any messages.
         self.idle_timeout = self._settings.PEER_IDLE_TIMEOUT

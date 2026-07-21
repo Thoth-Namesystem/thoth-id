@@ -1,16 +1,5 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from json import JSONDecodeError
 from typing import Any, Iterable
@@ -34,10 +23,16 @@ class BaseEventSimulationTester(SimulatorTestCase):
 
     def _prepare(self, reward_spend_min_blocks: int) -> None:
         peer = PrivatePeer.auto_generated()
-        builder = self.simulator.get_default_builder() \
-            .set_peer(peer) \
-            .enable_event_queue() \
-            .set_settings(self._settings._replace(REWARD_SPEND_MIN_BLOCKS=reward_spend_min_blocks))
+        builder = (
+            self.simulator.get_default_builder()
+            .set_peer(peer)
+            .enable_event_queue()
+            .set_settings(
+                self._settings.model_copy(
+                    update={"REWARD_SPEND_MIN_BLOCKS": reward_spend_min_blocks}
+                )
+            )
+        )
         artifacts = self.simulator.create_artifacts(builder)
 
         self.peer_id: str = str(peer.id)
@@ -62,12 +57,12 @@ class BaseEventSimulationTester(SimulatorTestCase):
         )
 
     def _get_success_responses(self) -> list[EventResponse]:
-        return list(map(EventResponse.parse_obj, self._get_transport_messages()))
+        return list(map(EventResponse.model_validate, self._get_transport_messages()))
 
     def _get_error_response(self) -> InvalidRequestResponse:
         responses = self._get_transport_messages()
         assert len(responses) == 1
-        return InvalidRequestResponse.parse_obj(responses[0])
+        return InvalidRequestResponse.model_validate(responses[0])
 
     def _get_transport_messages(self) -> list[dict[str, Any]]:
         values = self.transport.value()

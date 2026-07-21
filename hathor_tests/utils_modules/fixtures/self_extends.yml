@@ -1,6 +1,0 @@
-extends: self_extends.yml
-
-a: aa
-b:
-  d: dd
-  e: ee

@@ -1,19 +1,9 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import TYPE_CHECKING, Any, Optional
 
+from hathor.nanocontracts.blueprint_service import BlueprintService
 from hathor.transaction import BaseTransaction, Transaction
 
 if TYPE_CHECKING:
@@ -27,9 +17,11 @@ class VertexJsonSerializer:
     def __init__(
         self,
         storage: 'TransactionStorage',
+        blueprint_service: BlueprintService,
         nc_log_storage: Optional['NCLogStorage'] = None,
     ) -> None:
         self.tx_storage = storage
+        self.blueprint_service = blueprint_service
         self.nc_log_storage = nc_log_storage
 
     def to_json(
@@ -131,10 +123,10 @@ class VertexJsonSerializer:
             blueprint_id = BlueprintId(meta.nc_calls[0].blueprint_id)
         else:
             # Get blueprint_id from NanoHeader
-            blueprint_id = nano_header.get_blueprint_id(accept_failed_execution=True)
+            blueprint_id = nano_header.get_blueprint_id_for_json()
 
         try:
-            blueprint_class = self.tx_storage.get_blueprint_class(blueprint_id)
+            blueprint_class = self.blueprint_service.get_blueprint_class(blueprint_id)
         except NCFail:
             return None
 

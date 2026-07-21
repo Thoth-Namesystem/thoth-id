@@ -1,22 +1,11 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, assert_never
 
-from hathor.daa import DifficultyAdjustmentAlgorithm
+from hathor.daa import DAAFactory
 from hathor.feature_activation.feature_service import FeatureService
 from hathor.profiler import get_cpu_profiler
 from hathor.reward_lock import get_spent_reward_locked_info
@@ -49,6 +38,7 @@ from hathor.transaction.exceptions import (
     UnusedTokensError,
     WeightError,
 )
+from hathor.transaction.scripts.opcode import OpcodesVersion
 from hathor.transaction.token_info import TokenInfo, TokenInfoDict, TokenVersion
 from hathor.transaction.util import get_deposit_token_deposit_amount, get_deposit_token_withdraw_amount
 from hathor.types import TokenUid, VertexId
@@ -65,17 +55,17 @@ MAX_BETWEEN_CONFLICTS: int = 8
 
 
 class TransactionVerifier:
-    __slots__ = ('_settings', '_daa', '_feature_service')
+    __slots__ = ('_settings', '_daa_factory', '_feature_service')
 
     def __init__(
         self,
         *,
         settings: HathorSettings,
-        daa: DifficultyAdjustmentAlgorithm,
+        daa_factory: DAAFactory,
         feature_service: FeatureService,
     ) -> None:
         self._settings = settings
-        self._daa = daa
+        self._daa_factory = daa_factory
         self._feature_service = feature_service
 
     def verify_parents_basic(self, tx: Transaction) -> None:
@@ -93,12 +83,12 @@ class TransactionVerifier:
     def verify_weight(self, tx: Transaction) -> None:
         """Validate minimum tx difficulty."""
         assert self._settings.CONSENSUS_ALGORITHM.is_pow()
-        min_tx_weight = self._daa.minimum_tx_weight(tx)
+        min_tx_weight = self._daa_factory.minimum_tx_weight(tx)
         max_tx_weight = min_tx_weight + self._settings.MAX_TX_WEIGHT_DIFF
         if tx.weight < min_tx_weight - self._settings.WEIGHT_TOL:
             raise WeightError(f'Invalid new tx {tx.hash_hex}: weight ({tx.weight}) is '
                               f'smaller than the minimum weight ({min_tx_weight})')
-        elif min_tx_weight > self._settings.MAX_TX_WEIGHT_DIFF_ACTIVATION and tx.weight > max_tx_weight:
+        elif tx.weight > self._settings.MAX_TX_WEIGHT_DIFF_ACTIVATION and tx.weight > max_tx_weight:
             raise WeightError(f'Invalid new tx {tx.hash_hex}: weight ({tx.weight}) is '
                               f'greater than the maximum allowed ({max_tx_weight})')
 
@@ -119,26 +109,44 @@ class TransactionVerifier:
                 spent_tx = tx.get_spent_tx(tx_input)
             except TransactionDoesNotExist:
                 raise InexistentInput('Input tx does not exist: {}'.format(tx_input.tx_id.hex()))
-            if tx_input.index >= len(spent_tx.outputs):
+            try:
+                script = spent_tx.resolve_spent_output(tx_input.index).script
+            except IndexError:
                 raise InexistentInput('Output spent by this input does not exist: {} index {}'.format(
                     tx_input.tx_id.hex(), tx_input.index))
-            n_txops += counter.get_sigops_count(tx_input.data, spent_tx.outputs[tx_input.index].script)
+            n_txops += counter.get_sigops_count(tx_input.data, script)
 
         if n_txops > self._settings.MAX_TX_SIGOPS_INPUT:
             raise TooManySigOps(
                 'TX[{}]: Max number of sigops for inputs exceeded ({})'.format(tx.hash_hex, n_txops))
 
-    def verify_inputs(self, tx: Transaction, *, skip_script: bool = False) -> None:
+    def verify_inputs(self, tx: Transaction, params: VerificationParams, *, skip_script: bool = False) -> None:
         """Verify inputs signatures and ownership and all inputs actually exist"""
+        self._verify_inputs(self._settings, tx, params.features.opcodes_version, skip_script=skip_script)
+
+    @classmethod
+    def _verify_inputs(
+        cls,
+        settings: HathorSettings,
+        tx: Transaction,
+        opcodes_version: OpcodesVersion,
+        *,
+        skip_script: bool,
+    ) -> None:
         spent_outputs: set[tuple[VertexId, int]] = set()
         for input_tx in tx.inputs:
-            if len(input_tx.data) > self._settings.MAX_INPUT_DATA_SIZE:
+            if len(input_tx.data) > settings.MAX_INPUT_DATA_SIZE:
                 raise InvalidInputDataSize('size: {} and max-size: {}'.format(
-                    len(input_tx.data), self._settings.MAX_INPUT_DATA_SIZE
+                    len(input_tx.data), settings.MAX_INPUT_DATA_SIZE
                 ))
 
+            from hathor.transaction import TxOutput
+            from hathorlib.transaction.shielded_tx_output import ShieldedOutput
+
             spent_tx = tx.get_spent_tx(input_tx)
-            assert input_tx.index < len(spent_tx.outputs)
+            resolved = spent_tx.resolve_spent_output(input_tx.index)
+            assert isinstance(resolved, (TxOutput, ShieldedOutput)), \
+                'resolve_spent_output must return TxOutput or ShieldedOutput'
 
             if tx.timestamp <= spent_tx.timestamp:
                 raise TimestampError('tx={} timestamp={}, spent_tx={} timestamp={}'.format(
@@ -149,7 +157,7 @@ class TransactionVerifier:
                 ))
 
             if not skip_script:
-                self.verify_script(tx=tx, input_tx=input_tx, spent_tx=spent_tx)
+                cls.verify_script(tx=tx, input_tx=input_tx, spent_tx=spent_tx, opcodes_version=opcodes_version)
 
             # check if any other input in this tx is spending the same output
             key = (input_tx.tx_id, input_tx.index)
@@ -158,7 +166,14 @@ class TransactionVerifier:
                     tx.hash_hex, input_tx.tx_id.hex(), input_tx.index))
             spent_outputs.add(key)
 
-    def verify_script(self, *, tx: Transaction, input_tx: TxInput, spent_tx: BaseTransaction) -> None:
+    @staticmethod
+    def verify_script(
+        *,
+        tx: Transaction,
+        input_tx: TxInput,
+        spent_tx: BaseTransaction,
+        opcodes_version: OpcodesVersion,
+    ) -> None:
         """
         :type tx: Transaction
         :type input_tx: TxInput
@@ -166,7 +181,7 @@ class TransactionVerifier:
         """
         from hathor.transaction.scripts import script_eval
         try:
-            script_eval(tx, input_tx, spent_tx)
+            script_eval(tx, input_tx, spent_tx, opcodes_version)
         except ScriptError as e:
             raise InvalidInputData(e) from e
 
@@ -237,9 +252,10 @@ class TransactionVerifier:
                 raise InvalidToken('token uid index not available: index {}'.format(output.get_token_index()))
 
     @classmethod
-    def verify_sum(
+    def verify_transparent_balance(
         cls,
         settings: HathorSettings,
+        tx: Transaction,
         token_dict: TokenInfoDict,
         allow_nonexistent_tokens: bool = False,
     ) -> None:
@@ -264,7 +280,8 @@ class TransactionVerifier:
             cls._check_token_permissions(token_uid, token_info)
             match token_info.version:
                 case None:
-                    # when a token is not found, we can't assert the HTR value, since we don't know its version
+                    # When a token is not found, we can't assert the HTR value since we don't know the token version.
+                    # This is only possible for nanos, because they may create the missing token in execution-time.
                     if not allow_nonexistent_tokens:
                         raise TokenNotFound(f'token uid {token_uid.hex()} not found.')
                     has_nonexistent_tokens = True
@@ -287,15 +304,18 @@ class TransactionVerifier:
         # check whether the deposit/withdraw amount is correct
         htr_expected_amount = withdraw - deposit
         htr_info = token_dict[settings.HATHOR_TOKEN_UID]
-        if htr_info.amount < htr_expected_amount:
-            raise InputOutputMismatch('HTR balance is different than expected. (amount={}, expected={})'.format(
+        if htr_info.amount > htr_expected_amount:
+            raise InputOutputMismatch('There\'s an invalid surplus of HTR. (amount={}, expected={})'.format(
                 htr_info.amount,
                 htr_expected_amount,
             ))
 
-        # in a partial validation, it's not possible to check fees and
-        # htr amount since it depends on verification with all token versions
         if has_nonexistent_tokens:
+            # In a partial verification, it's not possible to check fees and
+            # HTR amount since it depends on knowledge of all token versions.
+            # The skipped checks below are simply postponed to execution-time
+            # and run when a block confirms the nano tx.
+            assert tx.is_nano_contract()
             return
 
         expected_fee = token_dict.calculate_fee(settings)
@@ -303,8 +323,8 @@ class TransactionVerifier:
             raise InputOutputMismatch(f"Fee amount is different than expected. "
                                       f"(amount={token_dict.fees_from_fee_header}, expected={expected_fee})")
 
-        if htr_info.amount > htr_expected_amount:
-            raise InputOutputMismatch('HTR balance is different than expected. (amount={}, expected={})'.format(
+        if htr_info.amount < htr_expected_amount:
+            raise InputOutputMismatch('There\'s an invalid deficit of HTR. (amount={}, expected={})'.format(
                 htr_info.amount,
                 htr_expected_amount,
             ))
@@ -314,7 +334,7 @@ class TransactionVerifier:
     @staticmethod
     def _check_token_permissions(token_uid: TokenUid, token_info: TokenInfo) -> None:
         """Verify whether token can be minted/melted based on its authority."""
-        from hathor.conf.settings import HATHOR_TOKEN_UID
+        from hathorlib.conf.settings import HATHOR_TOKEN_UID
         if token_info.version == TokenVersion.NATIVE:
             assert token_uid == HATHOR_TOKEN_UID
             assert not token_info.can_mint
@@ -333,7 +353,7 @@ class TransactionVerifier:
             TxVersion.TOKEN_CREATION_TRANSACTION,
         }
 
-        if params.enable_nano:
+        if params.features.nanocontracts:
             allowed_tx_versions.add(TxVersion.ON_CHAIN_BLUEPRINT)
 
         if tx.version not in allowed_tx_versions:
@@ -387,8 +407,9 @@ class TransactionVerifier:
                     # Skip tx itself.
                     continue
                 conflict_tx = tx.storage.get_transaction(h)
-                if conflict_tx.get_metadata().first_block is not None:
-                    # only mempool conflicts are allowed
+                conflict_meta = conflict_tx.get_metadata()
+                if conflict_meta.first_block is not None and not conflict_meta.voided_by:
+                    # only mempool conflicts are allowed or failed nano executions
                     raise ConflictWithConfirmedTxError('transaction has a conflict with a confirmed transaction')
                 if within_counter == 0:
                     # Only increment once per input.

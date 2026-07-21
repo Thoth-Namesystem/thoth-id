@@ -1,20 +1,9 @@
-# Copyright 2023 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Any, Callable, Iterator, NamedTuple, Optional, ParamSpec, TypeVar
 
-from pydantic import validate_arguments
+from pydantic import validate_call
 from structlog import get_logger
 
 from hathor.sysctl.exception import SysctlEntryNotFound, SysctlReadOnlyEntry, SysctlWriteOnlyEntry
@@ -58,7 +47,7 @@ class Sysctl:
         """Register a new parameter for sysctl."""
         assert path not in self._commands
         if setter is not None:
-            setter = validate_arguments(setter)
+            setter = validate_call(setter)
         self._commands[path] = SysctlCommand(
             getter=getter,
             setter=setter,

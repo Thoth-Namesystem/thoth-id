@@ -1,16 +1,5 @@
-#  Copyright 2025 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import re
 
@@ -52,7 +41,7 @@ class TestBlueprintSyntax(BlueprintTestCase):
             def fallback(self, ctx: Context, method_name: str, nc_args: NCArgs) -> int:
                 return 123
 
-        self.nc_catalog.blueprints[self.blueprint_id] = MyBlueprint
+        self.blueprint_service.register_blueprint(self.blueprint_id, MyBlueprint)
         self.runner.create_contract(self.contract_id, self.blueprint_id, self.ctx, 123)
 
     def test_forbidden_field_name(self) -> None:
@@ -113,7 +102,7 @@ class TestBlueprintSyntax(BlueprintTestCase):
         with pytest.raises(BlueprintSyntaxError, match=re.escape(msg)):
             class MyBlueprint(Blueprint):
                 @public
-                def initialize() -> None:  # type: ignore
+                def initialize() -> None:
                     pass
 
     def test_public_wrong_self(self) -> None:
@@ -129,7 +118,7 @@ class TestBlueprintSyntax(BlueprintTestCase):
         with pytest.raises(BlueprintSyntaxError, match=re.escape(msg)):
             class MyBlueprint(Blueprint):
                 @public
-                def initialize(self: int) -> None:  # type: ignore
+                def initialize(self: int) -> None:
                     pass
 
     def test_view_missing_self(self) -> None:
@@ -141,7 +130,7 @@ class TestBlueprintSyntax(BlueprintTestCase):
                     pass
 
                 @view
-                def nop() -> None:  # type: ignore
+                def nop() -> None:
                     pass
 
     def test_view_wrong_self(self) -> None:
@@ -165,7 +154,7 @@ class TestBlueprintSyntax(BlueprintTestCase):
                     pass
 
                 @view
-                def nop(self: int) -> None:  # type: ignore
+                def nop(self: int) -> None:
                     pass
 
     def test_fallback_missing_self(self) -> None:
@@ -177,7 +166,7 @@ class TestBlueprintSyntax(BlueprintTestCase):
                     pass
 
                 @fallback
-                def fallback() -> None:  # type: ignore
+                def fallback() -> None:
                     pass
 
     def test_fallback_wrong_self(self) -> None:
@@ -201,7 +190,7 @@ class TestBlueprintSyntax(BlueprintTestCase):
                     pass
 
                 @fallback
-                def fallback(self: int) -> None:  # type: ignore
+                def fallback(self: int) -> None:
                     pass
 
     def test_public_missing_context(self) -> None:
@@ -218,7 +207,7 @@ class TestBlueprintSyntax(BlueprintTestCase):
             def initialize(self, context: Context) -> None:
                 pass
 
-        self.nc_catalog.blueprints[self.blueprint_id] = MyBlueprint
+        self.blueprint_service.register_blueprint(self.blueprint_id, MyBlueprint)
         self.runner.create_contract(self.contract_id, self.blueprint_id, self.ctx)
 
     def test_public_context_untyped(self) -> None:

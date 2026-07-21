@@ -1,16 +1,5 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import Mock, patch
 
@@ -35,14 +24,16 @@ class PoaVerificationTest(unittest.TestCase):
         public_key = self.signer.get_public_key()
         public_key_bytes = get_public_key_bytes_compressed(public_key)
 
-        settings = self._settings._replace(
-            BLOCKS_PER_HALVING=None,
-            INITIAL_TOKEN_UNITS_PER_BLOCK=0,
-            MINIMUM_TOKEN_UNITS_PER_BLOCK=0,
-            CONSENSUS_ALGORITHM=PoaSettings(
-                type=ConsensusType.PROOF_OF_AUTHORITY,
-                signers=(PoaSignerSettings(public_key=public_key_bytes),),
-            ),
+        settings = self._settings.model_copy(
+            update={
+                'BLOCKS_PER_HALVING': None,
+                'INITIAL_TOKEN_MAIN_UNITS_PER_BLOCK': 0,
+                'MINIMUM_TOKEN_MAIN_UNITS_PER_BLOCK': 0,
+                'CONSENSUS_ALGORITHM': PoaSettings(
+                    type=ConsensusType.PROOF_OF_AUTHORITY,
+                    signers=(PoaSignerSettings(public_key=public_key_bytes),),
+                )
+            },
         )
 
         builder = self.get_builder().set_settings(settings)

@@ -1,60 +1,30 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
 import hashlib
 from types import ModuleType
-from typing import Callable, assert_never
 
-from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from pycoin.key.Key import Key as PycoinKey
 
-from hathor.conf.settings import HathorSettings, NanoContractsSetting
-from hathor.crypto.util import (
-    decode_address,
-    get_address_from_public_key_bytes,
-    get_public_key_bytes_compressed,
-    get_public_key_from_bytes_compressed,
-    is_pubkey_compressed,
-)
-from hathor.feature_activation.feature import Feature
-from hathor.feature_activation.feature_service import FeatureService
-from hathor.nanocontracts.types import NC_METHOD_TYPE_ATTR, BlueprintId, ContractId, NCMethodType, TokenUid, VertexId
-from hathor.transaction import Block
+from hathor.crypto.util import decode_address, get_address_from_public_key_bytes, get_public_key_bytes_compressed
 from hathor.transaction.headers import NanoHeader
 from hathor.util import not_none
-
-CHILD_CONTRACT_ID_PREFIX: bytes = b'child-contract'
-CHILD_TOKEN_ID_PREFIX: bytes = b'child-token'
-
-
-def is_nc_public_method(method: Callable) -> bool:
-    """Return True if the method is nc_public."""
-    return getattr(method, NC_METHOD_TYPE_ATTR, None) == NCMethodType.PUBLIC
-
-
-def is_nc_view_method(method: Callable) -> bool:
-    """Return True if the method is nc_view."""
-    return getattr(method, NC_METHOD_TYPE_ATTR, None) == NCMethodType.VIEW
-
-
-def is_nc_fallback_method(method: Callable) -> bool:
-    """Return True if the method is nc_fallback."""
-    return getattr(method, NC_METHOD_TYPE_ATTR, None) == NCMethodType.FALLBACK
+from hathorlib.nanocontracts.utils import (  # noqa: F401
+    CHILD_CONTRACT_ID_PREFIX,
+    CHILD_TOKEN_ID_PREFIX,
+    derive_child_contract_id,
+    derive_child_token_id,
+    is_nc_fallback_method,
+    is_nc_public_method,
+    is_nc_view_method,
+    json_dumps,
+    sha3,
+    verify_ecdsa,
+)
 
 
 def load_builtin_blueprint_for_ocb(filename: str, blueprint_name: str, module: ModuleType | None = None) -> str:
@@ -74,26 +44,6 @@ def load_builtin_blueprint_for_ocb(filename: str, blueprint_name: str, module: M
     res = code_text.getvalue()
     code_text.close()
     return res
-
-
-def derive_child_contract_id(parent_id: ContractId, salt: bytes, blueprint_id: BlueprintId) -> ContractId:
-    """Derives the contract id for a nano contract created by another (parent) contract."""
-    h = hashlib.sha256()
-    h.update(CHILD_CONTRACT_ID_PREFIX)
-    h.update(parent_id)
-    h.update(salt)
-    h.update(blueprint_id)
-    return ContractId(VertexId(h.digest()))
-
-
-def derive_child_token_id(parent_id: ContractId, token_symbol: str, *, salt: bytes = b'') -> TokenUid:
-    """Derive the token id for a token created by a (parent) contract."""
-    h = hashlib.sha256()
-    h.update(CHILD_TOKEN_ID_PREFIX)
-    h.update(parent_id)
-    h.update(salt)
-    h.update(token_symbol.encode('utf-8'))
-    return TokenUid(VertexId(h.digest()))
 
 
 def sign_openssl(nano_header: NanoHeader, privkey: ec.EllipticCurvePrivateKey) -> None:
@@ -150,39 +100,3 @@ def sign_openssl_multisig(
     signatures = [privkey.sign(data, ec.ECDSA(hashes.SHA256())) for privkey in sign_privkeys]
 
     nano_header.nc_script = MultiSig.create_input_data(redeem_script, signatures)
-
-
-def is_nano_active(*, settings: HathorSettings, block: Block, feature_service: FeatureService) -> bool:
-    """Return whether the Nano Contracts feature is active according to the provided settings and block."""
-    match settings.ENABLE_NANO_CONTRACTS:
-        case NanoContractsSetting.DISABLED:
-            return False
-        case NanoContractsSetting.ENABLED:
-            return True
-        case NanoContractsSetting.FEATURE_ACTIVATION:
-            return feature_service.is_feature_active(vertex=block, feature=Feature.NANO_CONTRACTS)
-        case _:  # pragma: no cover
-            assert_never(settings.ENABLE_NANO_CONTRACTS)
-
-
-def sha3(data: bytes) -> bytes:
-    """Calculate the SHA3-256 of some data."""
-    return hashlib.sha3_256(data).digest()
-
-
-def verify_ecdsa(public_key: bytes, data: bytes, signature: bytes) -> bool:
-    """Verify a cryptographic signature using a compressed public key for a SECP256K1 curve."""
-    from hathor.nanocontracts import NCFail
-    if not is_pubkey_compressed(public_key):
-        raise NCFail('public_key is not compressed')
-
-    try:
-        pubkey = get_public_key_from_bytes_compressed(public_key)
-    except ValueError as e:
-        raise NCFail('public_key is invalid') from e
-
-    try:
-        pubkey.verify(signature, data, ec.ECDSA(hashes.SHA256()))
-        return True
-    except InvalidSignature:
-        return False

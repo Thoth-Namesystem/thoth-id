@@ -1,16 +1,5 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import hathor
 from hathor._openapi.register import register_resource
@@ -90,14 +79,10 @@ class StatusResource(Resource):
 
         app = 'Hathor v{}'.format(hathor.__version__)
 
-        best_block_tips = []
-        for tip in self.manager.tx_storage.get_best_block_tips():
-            block = self.manager.tx_storage.get_block(tip)
-            best_block_tips.append({'hash': block.hash_hex, 'height': block.static_metadata.height})
-
         best_block = self.manager.tx_storage.get_best_block()
         raw_best_blockchain = self.manager.tx_storage.get_n_height_tips(self._settings.DEFAULT_BEST_BLOCKCHAIN_BLOCKS)
         best_blockchain = to_serializable_best_blockchain(raw_best_blockchain)
+        best_block_tips = [{'hash': best_block.hash_hex, 'height': best_block.static_metadata.height}]
 
         data = {
             'server': {
@@ -108,7 +93,7 @@ class StatusResource(Resource):
                 'uptime': now - self.manager.start_time,
                 'entrypoints': self.manager.connections.my_peer.info.entrypoints_as_str(),
             },
-            'peers_whitelist': [str(peer_id) for peer_id in self.manager.peers_whitelist],
+            'peers_whitelist': [str(peer_id) for peer_id in self.manager.connections.whitelist.peers],
             'known_peers': known_peers,
             'connections': {
                 'connected_peers': connected_peers,
@@ -156,6 +141,8 @@ _openapi_connecting_peer = {
 StatusResource.openapi = {
     '/status': {
         'x-visibility': 'public',
+        # The /status endpoint has a large reponse, so we need to increase the buffer size of the proxy
+        'x-proxy-buffers': '16 16k',
         'x-rate-limit': {
             'global': [
                 {

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from unittest.mock import Mock
 
 from hathor.crypto.util import decode_address
@@ -86,14 +89,8 @@ class SyncMethodsTestCase(unittest.TestCase):
             spent_meta = spent_tx.get_metadata()
             self.assertEqual([tx1.hash, tx2.hash], spent_meta.spent_outputs[txin.index])
 
-        # old indexes
-        self.assertNotIn(tx1.hash, [x.data for x in self.manager1.tx_storage.get_tx_tips()])
-        self.assertNotIn(tx2.hash, [x.data for x in self.manager1.tx_storage.get_tx_tips()])
-
-        # new indexes
-        if self.manager1.tx_storage.indexes.mempool_tips is not None:
-            self.assertNotIn(tx1.hash, self.manager1.tx_storage.indexes.mempool_tips.get())
-            self.assertNotIn(tx2.hash, self.manager1.tx_storage.indexes.mempool_tips.get())
+        self.assertNotIn(tx1.hash, self.manager1.tx_storage.indexes.mempool_tips.get())
+        self.assertNotIn(tx2.hash, self.manager1.tx_storage.indexes.mempool_tips.get())
 
         # Propagate another conflicting transaction, but with higher weight.
         self.manager1.propagate_tx(tx3)
@@ -116,16 +113,9 @@ class SyncMethodsTestCase(unittest.TestCase):
             spent_meta = spent_tx.get_metadata()
             self.assertEqual([tx1.hash, tx2.hash, tx3.hash], spent_meta.spent_outputs[txin.index])
 
-        # old indexes
-        self.assertNotIn(tx1.hash, [x.data for x in self.manager1.tx_storage.get_tx_tips()])
-        self.assertNotIn(tx2.hash, [x.data for x in self.manager1.tx_storage.get_tx_tips()])
-        self.assertIn(tx3.hash, [x.data for x in self.manager1.tx_storage.get_tx_tips()])
-
-        # new indexes
-        if self.manager1.tx_storage.indexes.mempool_tips is not None:
-            self.assertNotIn(tx1.hash, self.manager1.tx_storage.indexes.mempool_tips.get())
-            self.assertNotIn(tx2.hash, self.manager1.tx_storage.indexes.mempool_tips.get())
-            self.assertIn(tx3.hash, self.manager1.tx_storage.indexes.mempool_tips.get())
+        self.assertNotIn(tx1.hash, self.manager1.tx_storage.indexes.mempool_tips.get())
+        self.assertNotIn(tx2.hash, self.manager1.tx_storage.indexes.mempool_tips.get())
+        self.assertIn(tx3.hash, self.manager1.tx_storage.indexes.mempool_tips.get())
 
         self.assertConsensusValid(self.manager1)
 

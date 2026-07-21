@@ -1,23 +1,11 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import Mock
 
 import pytest
 
 from hathor.conf.get_settings import get_global_settings
-from hathor.conf.settings import HathorSettings
 from hathor.feature_activation.feature import Feature
 from hathor.feature_activation.feature_service import BlockIsMissingSignal, BlockIsSignaling, FeatureService
 from hathor.transaction import Block
@@ -43,7 +31,7 @@ def test_calculate_feature_activation_bit_counts_genesis():
 def tx_storage() -> TransactionStorage:
     artifacts = TestBuilder().build()
     storage = artifacts.tx_storage
-    indexes = not_none(artifacts.indexes)
+    indexes = artifacts.indexes
     feature_activation_bits = [
         0b0000,  # 0: boundary block
         0b1010,
@@ -139,13 +127,13 @@ def test_get_feature_activation_bit_value() -> None:
 
 
 def test_verify_must_signal() -> None:
-    settings = Mock(spec_set=HathorSettings)
+    settings = Mock()
     settings.CHECKPOINTS = []
     feature_service = Mock(spec_set=FeatureService)
     feature_service.is_signaling_mandatory_features = Mock(
         return_value=BlockIsMissingSignal(feature=Feature.NOP_FEATURE_1)
     )
-    verifier = BlockVerifier(settings=settings, feature_service=feature_service, daa=Mock(), tx_storage=Mock())
+    verifier = BlockVerifier(settings=settings, feature_service=feature_service, daa_factory=Mock(), tx_storage=Mock())
     block = Block()
 
     with pytest.raises(BlockMustSignalError) as e:
@@ -155,11 +143,11 @@ def test_verify_must_signal() -> None:
 
 
 def test_verify_must_not_signal() -> None:
-    settings = Mock(spec_set=HathorSettings)
+    settings = Mock()
     settings.CHECKPOINTS = []
     feature_service = Mock(spec_set=FeatureService)
     feature_service.is_signaling_mandatory_features = Mock(return_value=BlockIsSignaling())
-    verifier = BlockVerifier(settings=settings, feature_service=feature_service, daa=Mock(), tx_storage=Mock())
+    verifier = BlockVerifier(settings=settings, feature_service=feature_service, daa_factory=Mock(), tx_storage=Mock())
     block = Block()
 
     verifier.verify_mandatory_signaling(block)

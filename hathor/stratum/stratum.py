@@ -1,16 +1,5 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
 from hashlib import sha256
@@ -122,11 +111,11 @@ class MinerJob(NamedTuple):
     # XXX: these typings are causing too much trouble, since this module hasn't been touched for a while and won't be
     #      touched for the foreseeable future (and will possibly even removed before any changes) it seems fine to just
     #      use Any so there aren't any mypy complaints anymore
-    data: Any = Array('B', 2048)
-    data_size: Any = Value('I')
-    job_id: Any = Array('B', 16)
-    nonce_size: Any = Value('I')
-    weight: Any = Value('d')
+    data: Any
+    data_size: Any
+    job_id: Any
+    nonce_size: Any
+    weight: Any
 
     def update_job(self, params: dict[str, Any]) -> bool:
         """
@@ -836,7 +825,13 @@ class StratumClient(JSONRPC):
     def __init__(self, reactor: Reactor, proc_count: Optional[int] = None, address: Optional[bytes] = None,
                  id_generator: Optional[Callable[[], Iterator[Union[str, int]]]] = lambda: count()):
         self.log = logger.new()
-        self.job_data = MinerJob()
+        self.job_data = MinerJob(
+            data=Array('B', 2048),
+            data_size=Value('I'),
+            job_id=Array('B', 16),
+            nonce_size=Value('I'),
+            weight=Value('d'),
+        )
         self.signal = Value('B')
         self.queue = MQueue()
         self.proc_count = proc_count

@@ -1,16 +1,5 @@
-# Copyright 2023 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import os
 import re
@@ -260,6 +249,7 @@ class ResourcesBuilder:
                 BlueprintSourceCodeResource,
                 NanoContractHistoryResource,
                 NanoContractStateResource,
+                NCDryRunResource,
             )
             nc_resource = Resource()
             root.putChild(b'nano_contract', nc_resource)
@@ -273,6 +263,9 @@ class ResourcesBuilder:
             nc_resource.putChild(b'state', NanoContractStateResource(self.manager))
             nc_resource.putChild(b'creation', NCCreationResource(self.manager))
             nc_resource.putChild(b'logs', NCExecLogsResource(self.manager))
+            nc_resource.putChild(b'dry_run', NCDryRunResource(
+                self.manager.tx_storage, self.manager.consensus_algorithm.block_executor
+            ))
 
         if self._args.enable_debug_api:
             debug_resource = Resource()
@@ -315,7 +308,6 @@ class ResourcesBuilder:
                 parent.putChild(url_path, resource)
 
         # Websocket resource
-        assert self.manager.tx_storage.indexes is not None
         ws_factory = HathorAdminWebsocketFactory(manager=self.manager,
                                                  metrics=self.manager.metrics,
                                                  address_index=self.manager.tx_storage.indexes.addresses)
@@ -323,6 +315,7 @@ class ResourcesBuilder:
             ws_factory.disable_history_streaming()
         root.putChild(b'ws', WebSocketResource(ws_factory))
 
+        mining_ws_factory: MiningWebsocketFactory | None = None
         if settings.CONSENSUS_ALGORITHM.is_pow():
             # Mining websocket resource
             mining_ws_factory = MiningWebsocketFactory(self.manager)
@@ -348,6 +341,7 @@ class ResourcesBuilder:
         # Set websocket factory in metrics. It'll be started when the manager is started.
         self.manager.websocket_factory = ws_factory
         self.manager.metrics.websocket_factory = ws_factory
+        self.manager.metrics.mining_ws_factory = mining_ws_factory
 
         self._built_status = True
         return status_server

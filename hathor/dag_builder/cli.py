@@ -1,16 +1,5 @@
-# Copyright 2024 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from hathor.dag_builder.builder import DAGBuilder
 
@@ -22,8 +11,8 @@ def main(filename: str, genesis_seed: str) -> None:
     _ = initialize_global_reactor(use_asyncio_reactor=False)
 
     from hathor.conf.get_settings import get_global_settings
-    from hathor.daa import DifficultyAdjustmentAlgorithm
-    from hathor.nanocontracts.catalog import generate_catalog_from_settings
+    from hathor.daa import DAAFactory
+    from hathor.nanocontracts.catalog import NCBlueprintCatalog
     from hathor.wallet import HDWallet
     settings = get_global_settings()
 
@@ -36,12 +25,14 @@ def main(filename: str, genesis_seed: str) -> None:
         return hd
 
     genesis_wallet = wallet_factory(genesis_seed)
-    daa = DifficultyAdjustmentAlgorithm(settings=settings)
-    nc_catalog = generate_catalog_from_settings(settings)
+    daa_factory = DAAFactory(settings=settings)
+    nc_catalog = NCBlueprintCatalog()
+    blueprints = NCBlueprintCatalog.generate_blueprints_from_settings(settings)
+    nc_catalog.register_blueprints(blueprints)
 
     builder = DAGBuilder(
         settings=settings,
-        daa=daa,
+        daa_factory=daa_factory,
         genesis_wallet=genesis_wallet,
         wallet_factory=wallet_factory,
         vertex_resolver=lambda x: None,

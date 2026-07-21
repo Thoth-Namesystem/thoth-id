@@ -1,16 +1,5 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import os
 import sys
@@ -32,6 +21,7 @@ class CliManager:
         self.longest_cmd: int = 0
 
         from . import (
+            asyncapi_json,
             check_blueprint,
             db_export,
             db_import,
@@ -44,6 +34,7 @@ class CliManager:
             multisig_address,
             multisig_signature,
             multisig_spend,
+            nc_dry_run,
             nc_dump,
             nginx_config,
             openapi_json,
@@ -78,7 +69,8 @@ class CliManager:
         self.add_cmd('side-dag', 'gen_poa_keys', generate_poa_keys, 'Generate a private/public key pair and its '
                                                                     'address to be used in Proof-of-Authority')
         self.add_cmd('side-dag', 'gen_genesis', generate_genesis, 'Generate a new genesis')
-        self.add_cmd('docs', 'generate_openapi_json', openapi_json, 'Generate OpenAPI json for API docs')
+        self.add_cmd('docs', 'generate_openapi_json', openapi_json, 'Generate OpenAPI json for REST API docs')
+        self.add_cmd('docs', 'generate_asyncapi_json', asyncapi_json, 'Generate AsyncAPI json for WebSocket API docs')
         self.add_cmd('multisig', 'gen_multisig_address', multisig_address, 'Generate a new multisig address')
         self.add_cmd('multisig', 'spend_multisig_output', multisig_spend, 'Generate tx that spends a multisig output')
         self.add_cmd('multisig', 'tx_signature', multisig_signature, 'Generate a signature of a multisig tx')
@@ -101,6 +93,7 @@ class CliManager:
         self.add_cmd('dev', 'x-export', db_export, 'EXPERIMENTAL: Export database to a simple format.')
         self.add_cmd('dev', 'x-import', db_import, 'EXPERIMENTAL: Import database from exported format.')
         self.add_cmd('dev', 'x-nc-dump', nc_dump, 'EXPERIMENTAL: Dump the nc storage in a text format.')
+        self.add_cmd('dev', 'x-nc-dry-run', nc_dry_run, 'EXPERIMENTAL: Dry-run NC block execution')
         self.add_cmd('dev', 'replay-logs', replay_logs, 'EXPERIMENTAL: re-play json logs as console printed')
         self.add_cmd('dev', 'load-from-logs', load_from_logs,
                      'Load vertices as they are found in a log dump that was parsed with parse-logs')

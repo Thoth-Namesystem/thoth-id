@@ -1,16 +1,5 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Any
 from unittest.mock import Mock, patch
@@ -77,7 +66,12 @@ class BaseFeatureSimulationTest(SimulatorTestCase):
             }
         )
 
-        settings = get_global_settings()._replace(FEATURE_ACTIVATION=feature_settings, REWARD_SPEND_MIN_BLOCKS=0)
+        settings = get_global_settings().model_copy(
+            update={
+                "FEATURE_ACTIVATION": feature_settings,
+                "REWARD_SPEND_MIN_BLOCKS": 0,
+            }
+        )
         self.simulator.settings = settings
         builder = self.get_simulator_builder().set_settings(settings)
         artifacts = self.simulator.create_artifacts(builder)
@@ -468,7 +462,7 @@ class BaseFeatureSimulationTest(SimulatorTestCase):
             }
         )
 
-        settings = get_global_settings()._replace(FEATURE_ACTIVATION=feature_settings)
+        settings = get_global_settings().model_copy(update={'FEATURE_ACTIVATION': feature_settings})
         builder = self.get_simulator_builder().set_settings(settings)
         artifacts = self.simulator.create_artifacts(builder)
         feature_service = artifacts.feature_service
@@ -701,7 +695,7 @@ class RocksDBStorageFeatureSimulationTest(BaseFeatureSimulationTest):
             }
         )
 
-        settings = get_global_settings()._replace(FEATURE_ACTIVATION=feature_settings)
+        settings = get_global_settings().model_copy(update={'FEATURE_ACTIVATION': feature_settings})
         rocksdb_dir = self.get_rocksdb_directory()
         builder1 = self.get_simulator_builder_from_dir(rocksdb_dir).set_settings(settings)
         artifacts1 = self.simulator.create_artifacts(builder1)

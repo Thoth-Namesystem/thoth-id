@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -5,7 +8,6 @@ from twisted.internet.defer import inlineCallbacks
 
 from hathor.conf import HathorSettings
 from hathor.nanocontracts import Blueprint, Context, public
-from hathor.nanocontracts.catalog import NCBlueprintCatalog
 from hathor.nanocontracts.method import Method
 from hathor.nanocontracts.resources import NanoContractHistoryResource
 from hathor.nanocontracts.utils import sign_openssl
@@ -55,10 +57,7 @@ class NanoContractHistoryTest(_BaseResourceTest._ResourceTest):
         self.web = StubSite(NanoContractHistoryResource(self.manager))
 
         self.blueprint_id = b'1' * 32
-        self.catalog = NCBlueprintCatalog({
-            self.blueprint_id: MyBlueprint
-        })
-        self.tx_storage.nc_catalog = self.catalog
+        self.manager.blueprint_service.register_blueprint(self.blueprint_id, MyBlueprint)
         self.nc_seqnum = 0
 
     @inlineCallbacks
@@ -184,6 +183,20 @@ class NanoContractHistoryTest(_BaseResourceTest._ResourceTest):
         self.assertEqual(len(data2['history']), 2)
         ids = [tx['hash'] for tx in data2['history']]
         self.assertEqual(ids, [tx1.hash.hex(), nc1.hash.hex()])
+
+        # Check ascending order
+        response_asc = yield self.web.get(
+            'history',
+            {
+                b'id': nc1.hash.hex().encode('ascii'),
+                b'order': b'asc',
+            }
+        )
+        data_asc = response_asc.json_value()
+        self.assertEqual(data_asc['has_more'], False)
+        self.assertEqual(len(data_asc['history']), 2)
+        ids_asc = [tx['hash'] for tx in data_asc['history']]
+        self.assertEqual(ids_asc, [nc1.hash.hex(), tx1.hash.hex()])
 
         # Check paging works minimally with after
         response2a = yield self.web.get(

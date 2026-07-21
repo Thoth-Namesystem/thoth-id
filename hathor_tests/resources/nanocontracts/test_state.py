@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 import hashlib
 import math
 from typing import Any, NamedTuple, Optional, TypeAlias
@@ -9,7 +12,6 @@ from twisted.internet.defer import inlineCallbacks
 from hathor.conf import HathorSettings
 from hathor.crypto.util import decode_address, get_address_b58_from_bytes, get_public_key_bytes_compressed
 from hathor.nanocontracts import Blueprint, Context, public, view
-from hathor.nanocontracts.catalog import NCBlueprintCatalog
 from hathor.nanocontracts.method import Method
 from hathor.nanocontracts.resources import NanoContractStateResource
 from hathor.nanocontracts.types import (
@@ -24,10 +26,11 @@ from hathor.nanocontracts.types import (
 )
 from hathor.nanocontracts.utils import sign_openssl
 from hathor.simulator.utils import add_new_block
-from hathor.transaction import Transaction, TxInput
+from hathor.transaction import Block, Transaction, TxInput
 from hathor.transaction.headers import NanoHeader
 from hathor.transaction.headers.nano_header import NanoHeaderAction
 from hathor.transaction.scripts import P2PKH
+from hathor_tests.dag_builder.builder import TestDAGBuilder
 from hathor_tests.resources.base_resource import StubSite, _BaseResourceTest
 from hathor_tests.utils import add_blocks_unlock_reward, get_genesis_key
 
@@ -54,6 +57,8 @@ class MyBlueprint(Blueprint):
     address_details: dict[Address, dict[str, Amount]]
     bytes_field: bytes
     dict_with_bytes: dict[bytes, str]
+    list_field: list[int]
+    set_field: set[int]
     last_caller_id: CallerId
     last_bet_address: Address
     last_vertex_id: VertexId
@@ -67,6 +72,8 @@ class MyBlueprint(Blueprint):
         self.address_details = {}
         self.bytes_field = b''
         self.dict_with_bytes = {}
+        self.list_field = []
+        self.set_field = set()
         self.last_caller_id = ctx.caller_id
         self.last_bet_address = Address(b'\00' * 25)
         self.last_vertex_id = VertexId(ctx.vertex.hash)
@@ -151,11 +158,7 @@ class BaseNanoContractStateTest(_BaseResourceTest._ResourceTest):
         self.web = StubSite(NanoContractStateResource(self.manager))
 
         self.bet_id = bytes.fromhex('3cb032600bdf7db784800e4ea911b10676fa2f67591f82bb62628c234e771595')
-        self.catalog = NCBlueprintCatalog({
-            self.bet_id: MyBlueprint
-        })
-
-        self.tx_storage.nc_catalog = self.catalog
+        self.manager.blueprint_service.register_blueprint(self.bet_id, MyBlueprint)
         self.nc_seqnum = 0
 
     @inlineCallbacks
@@ -213,6 +216,52 @@ class BaseNanoContractStateTest(_BaseResourceTest._ResourceTest):
 
         sign_openssl(nano_header, private_key)
         self.manager.cpu_mining_service.resolve(nc)
+
+    @inlineCallbacks
+    def test_container_field_returns_field_error(self):
+        parents = [tx.hash for tx in self.genesis_txs]
+        timestamp = 1 + max(tx.timestamp for tx in self.genesis)
+
+        nc = Transaction(
+            weight=1,
+            inputs=[],
+            outputs=[],
+            parents=parents,
+            storage=self.tx_storage,
+            timestamp=timestamp
+        )
+        self._fill_nc(
+            nc,
+            self.bet_id,
+            'initialize',
+            [settings.HATHOR_TOKEN_UID, timestamp],
+            self.genesis_private_key,
+        )
+        self.assertTrue(self.manager.on_new_tx(nc))
+        add_new_block(self.manager)
+
+        response = yield self.web.get(
+            'state', [
+                (b'id', nc.hash.hex().encode('ascii')),
+                (b'fields[]', b'token_uid'),
+                (b'fields[]', b'address_details'),
+                (b'fields[]', b'list_field'),
+                (b'fields[]', b'set_field'),
+            ]
+        )
+
+        data = response.json_value()
+        self.assertTrue(data['success'])
+        fields = data['fields']
+        self.assertEqual(fields['token_uid'], {'value': settings.HATHOR_TOKEN_UID.hex()})
+        self.assertEqual(fields['address_details'], {'errmsg': 'field cannot be rendered'})
+        # XXX: these are ideally the errors that make sense to return:
+        # self.assertEqual(fields['list_field'], {'errmsg': 'field cannot be rendered'})
+        # self.assertEqual(fields['set_field'], {'errmsg': 'field cannot be rendered'})
+        # XXX: however the current implementation quirks field these:
+        self.assertEqual(fields['list_field'], {'errmsg': 'field not found'})
+        self.assertEqual(fields['set_field'], {'errmsg': 'field not found'})
+        # XXX: it will change in the future along with a complete state-api implementation for container fields
 
     @inlineCallbacks
     def test_success(self):
@@ -564,3 +613,42 @@ class BaseNanoContractStateTest(_BaseResourceTest._ResourceTest):
         assert response12.json_value()['calls']['get_return_tuple()'] == {
             'value': ['bar', '1' * 64]
         }
+
+    async def test_state_by_timestamp_with_voided_block(self) -> None:
+        """Test that querying nano contract state by timestamp correctly skips voided blocks."""
+        dag_builder = TestDAGBuilder.from_manager(self.manager)
+        date_last_bet = 1699579721
+
+        artifacts = dag_builder.build_from_str(f"""
+            blockchain genesis b[1..11]
+            blockchain b10 a[11..12]
+            b10 < dummy
+            a12.weight = 3
+
+            nc1.nc_id = "{self.bet_id.hex()}"
+            nc1.nc_method = initialize("00", {date_last_bet})
+            nc1 <-- b11
+
+            b11 < a11
+        """)
+
+        artifacts.propagate_with(self.manager)
+
+        b11, a11 = artifacts.get_typed_vertices(('b11', 'a11'), Block)
+        nc1 = artifacts.get_typed_vertex('nc1', Transaction)
+
+        # After the reorg, b11 is voided and a11 is the best chain
+        assert b11.get_metadata().voided_by
+        assert not a11.get_metadata().voided_by
+        assert b11.timestamp < a11.timestamp
+
+        # Query state by b11's timestamp (voided block).
+        response = await self.web.get(
+            'state', [
+                (b'id', nc1.hash.hex().encode('ascii')),
+                (b'timestamp', str(b11.timestamp).encode('ascii')),
+            ]
+        )
+        # The NC was confirmed by b11 which is now voided, so the contract
+        # should not exist at this point (b10). The API must return 404, not crash.
+        assert response.responseCode == 404

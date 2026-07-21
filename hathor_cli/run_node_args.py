@@ -1,31 +1,22 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Optional
 
-from pydantic import Extra
+from pydantic import ConfigDict
 
 from hathor.feature_activation.feature import Feature  # skip-cli-import-custom-check
 from hathor.nanocontracts.nc_exec_logs import NCLogConfig  # skip-cli-import-custom-check
 from hathor.utils.pydantic import BaseModel  # skip-cli-import-custom-check
 
 
-class RunNodeArgs(BaseModel, extra=Extra.allow):
+class RunNodeArgs(BaseModel):
     """
     Class that represents the CLI arguments used by the run_node command.
     Arguments must also be added to hathor_cli.run_node.RunNode.create_parser.
     """
+    model_config = ConfigDict(extra='allow')
+
     hostname: Optional[str]
     auto_hostname: bool
     unsafe_mode: Optional[str]
@@ -33,6 +24,7 @@ class RunNodeArgs(BaseModel, extra=Extra.allow):
     testnet_hotel: bool
     testnet_golf: bool
     test_mode_tx_weight: bool
+    test_mode_block_weight: bool
     dns: Optional[str]
     peer: Optional[str]
     sysctl: Optional[str]

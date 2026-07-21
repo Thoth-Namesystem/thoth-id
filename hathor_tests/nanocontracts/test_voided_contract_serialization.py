@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from hathor.nanocontracts import NC_EXECUTION_FAIL_ID, Blueprint, Context, public
 from hathor.nanocontracts.exception import NCFail
 from hathor.transaction import Block, Transaction
@@ -80,4 +83,4 @@ class VoidedContractSerializationTest(BlueprintTestCase):
         stored_call = self.manager.tx_storage.get_transaction(call_tx.hash)
         data = stored_call.to_json_extended()
         assert data['nc_id'] == nc_fail.hash_hex
-        assert data['nc_blueprint_id'] == self.fail_blueprint_id.hex()
+        assert data['nc_blueprint_id'] == ''

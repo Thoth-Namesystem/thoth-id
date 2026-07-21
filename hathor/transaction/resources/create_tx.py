@@ -1,16 +1,5 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import base64
 
@@ -18,10 +7,12 @@ from hathor._openapi.register import register_resource
 from hathor.api_util import Resource, set_cors
 from hathor.crypto.util import decode_address
 from hathor.exception import InvalidNewTransaction
+from hathor.feature_activation.utils import Features
 from hathor.manager import HathorManager
 from hathor.transaction import Transaction, TxInput, TxOutput
 from hathor.transaction.scripts import create_output_script
 from hathor.util import api_catch_exceptions, json_dumpb, json_loadb
+from hathor.verification.verification_params import VerificationParams
 
 
 def from_raw_output(raw_output: dict, tokens: list[bytes]) -> TxOutput:
@@ -88,7 +79,7 @@ class CreateTxResource(Resource):
         for tx_input in fake_signed_tx.inputs:
             # conservative estimate of the input data size to estimate a valid weight
             tx_input.data = b'\0' * 107
-        tx.weight = self.manager.daa.minimum_tx_weight(fake_signed_tx)
+        tx.weight = self.manager.daa_factory.minimum_tx_weight(fake_signed_tx)
         tx.init_static_metadata_from_storage(self.manager._settings, self.manager.tx_storage)
         self._verify_unsigned_skip_pow(tx)
 
@@ -116,13 +107,14 @@ class CreateTxResource(Resource):
         verifiers.tx.verify_output_token_indexes(tx)
         verifiers.vertex.verify_sigops_output(tx, enable_checkdatasig_count=True)
         verifiers.tx.verify_sigops_input(tx, enable_checkdatasig_count=True)
+        best_block = self.manager.tx_storage.get_best_block()
+        params = VerificationParams.for_mempool(best_block=best_block, features=Features.all_enabled())
         # need to run verify_inputs first to check if all inputs exist
-        verifiers.tx.verify_inputs(tx, skip_script=True)
+        verifiers.tx.verify_inputs(tx, params, skip_script=True)
         verifiers.vertex.verify_parents(tx)
 
-        best_block = self.manager.tx_storage.get_best_block()
         block_storage = self.manager.get_nc_block_storage(best_block)
-        verifiers.tx.verify_sum(self.manager._settings, tx.get_complete_token_info(block_storage))
+        verifiers.tx.verify_transparent_balance(self.manager._settings, tx, tx.get_complete_token_info(block_storage))
 
 
 CreateTxResource.openapi = {

@@ -1,9 +1,13 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 import base64
 
 import base58
 
 from hathor.transaction import Transaction, TxInput, TxOutput
 from hathor.transaction.scripts import P2PKH, NanoContractMatchValues, script_eval
+from hathor.transaction.scripts.opcode import OpcodesVersion
 from hathor.util import json_dumpb
 from hathor_tests import unittest
 
@@ -38,4 +42,4 @@ class NanoContracts(unittest.TestCase):
         txin = TxInput(b'aa', 0, input_data)
         spent_tx = Transaction(outputs=[TxOutput(20, script)])
         tx = Transaction(outputs=[TxOutput(20, P2PKH.create_output_script(address))])
-        script_eval(tx, txin, spent_tx)
+        script_eval(tx, txin, spent_tx, OpcodesVersion.V1)

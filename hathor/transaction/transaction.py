@@ -1,50 +1,39 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
-import hashlib
-from struct import pack
 from typing import TYPE_CHECKING, Any, NamedTuple, Optional, TypeVar
 
-from typing_extensions import Self, override
+from typing_extensions import Self, final, override
 
 from hathor.checkpoint import Checkpoint
 from hathor.crypto.util import get_address_b58_from_bytes
 from hathor.exception import InvalidNewTransaction
+from hathor.serialization import Serializer
 from hathor.transaction import TxInput, TxOutput, TxVersion
-from hathor.transaction.base_transaction import TX_HASH_SIZE, GenericVertex
+from hathor.transaction.base_transaction import GenericVertex
 from hathor.transaction.exceptions import InvalidToken
-from hathor.transaction.headers import NanoHeader, VertexBaseHeader
+from hathor.transaction.headers import (
+    AnyVertexHeader,
+    NanoHeader,
+    ShieldedOutputsHeader,
+    UnshieldBalanceHeader,
+)
 from hathor.transaction.headers.fee_header import FeeHeader
 from hathor.transaction.static_metadata import TransactionStaticMetadata
 from hathor.transaction.token_info import TokenInfo, TokenInfoDict, TokenVersion, get_token_version
-from hathor.transaction.util import VerboseCallback, unpack, unpack_len
+from hathor.transaction.util import VerboseCallback
 from hathor.types import TokenUid, VertexId
+from hathorlib.token_amount_version import TokenAmountVersion
+from hathorlib.transaction.shielded_tx_output import ShieldedOutput
 
-T = TypeVar('T', bound=VertexBaseHeader)
+T = TypeVar('T', bound=AnyVertexHeader)
 
 if TYPE_CHECKING:
     from hathor.conf.settings import HathorSettings
     from hathor.nanocontracts.storage import NCBlockStorage
     from hathor.transaction.storage import TransactionStorage  # noqa: F401
-
-# Signal bits (B), version (B), token uids len (B) and inputs len (B), outputs len (B).
-_FUNDS_FORMAT_STRING = '!BBBBB'
-
-# Signal bits (B), version (B), inputs len (B), and outputs len (B), token uids len (B).
-_SIGHASH_ALL_FORMAT_STRING = '!BBBBB'
 
 
 class RewardLockedInfo(NamedTuple):
@@ -93,6 +82,41 @@ class Transaction(GenericVertex[TransactionStaticMetadata]):
         self._sighash_cache: Optional[bytes] = None
         self._sighash_data_cache: Optional[bytes] = None
 
+    @override
+    def get_funds_struct(self) -> bytes:
+        from hathor.transaction.vertex_parser._transaction import serialize_tx_funds
+        serializer = Serializer.build_bytes_serializer()
+        serialize_tx_funds(serializer, self)
+        return bytes(serializer.finalize())
+
+    @override
+    def get_graph_struct(self) -> bytes:
+        from hathor.transaction.vertex_parser._common import serialize_graph_fields
+        serializer = Serializer.build_bytes_serializer()
+        serialize_graph_fields(serializer, self)
+        return bytes(serializer.finalize())
+
+    @classmethod
+    @override
+    def create_from_struct(cls, struct_bytes: bytes, storage: Optional['TransactionStorage'] = None,
+                           *, verbose: VerboseCallback = None) -> Self:
+        from hathor.conf.get_settings import get_global_settings
+        from hathor.transaction.vertex_parser._common import deserialize_graph_fields, make_vertex_deserializer
+        from hathor.transaction.vertex_parser._headers import deserialize_headers
+        from hathor.transaction.vertex_parser._transaction import deserialize_tx_funds
+        settings = get_global_settings()
+        tx = cls(storage=storage)
+        deserializer = make_vertex_deserializer(struct_bytes, settings)
+        deserialize_tx_funds(deserializer, tx, verbose=verbose)
+        deserialize_graph_fields(deserializer, tx, verbose=verbose)
+        (tx.nonce,) = deserializer.read_struct('!I')
+        if verbose:
+            verbose('nonce', tx.nonce)
+        deserialize_headers(deserializer, tx, settings)
+        deserializer.finalize()
+        tx.update_hash()
+        return tx
+
     def clear_sighash_cache(self) -> None:
         """Clear caches related to sighash calculation."""
         self._sighash_cache = None
@@ -133,6 +157,59 @@ class Transaction(GenericVertex[TransactionStaticMetadata]):
         """Return the FeeHeader or raise ValueError."""
         return self._get_header(FeeHeader)
 
+    def has_shielded_outputs(self) -> bool:
+        """Returns true if this transaction has a shielded outputs header."""
+        try:
+            self.get_shielded_outputs_header()
+        except ValueError:
+            return False
+        else:
+            return True
+
+    def has_shielded_inputs(self) -> bool:
+        """Return whether any input references a shielded output (needs storage)."""
+        assert self.storage is not None
+        for tx_input in self.inputs:
+            spent_tx = self.storage.get_transaction(tx_input.tx_id)
+            if tx_input.index >= len(spent_tx.outputs):
+                return True
+        return False
+
+    def is_shielded(self) -> bool:
+        """Return whether this tx involves any shielded components (inputs or outputs)."""
+        return self.has_shielded_outputs() or self.has_shielded_inputs()
+
+    def get_shielded_outputs_header(self) -> ShieldedOutputsHeader:
+        """Return the ShieldedOutputsHeader or raise ValueError."""
+        return self._get_header(ShieldedOutputsHeader)
+
+    @property
+    def shielded_outputs(self) -> list[ShieldedOutput]:
+        """Return the list of shielded outputs, or empty list if no header."""
+        if self.has_shielded_outputs():
+            return self.get_shielded_outputs_header().shielded_outputs
+        return []
+
+    def has_unshield_balance_header(self) -> bool:
+        """Returns true if this tx carries an excess blinding factor for full-unshield."""
+        try:
+            self.get_unshield_balance_header()
+        except ValueError:
+            return False
+        else:
+            return True
+
+    def get_unshield_balance_header(self) -> UnshieldBalanceHeader:
+        """Return the UnshieldBalanceHeader or raise ValueError."""
+        return self._get_header(UnshieldBalanceHeader)
+
+    @property
+    def excess_blinding_factor(self) -> bytes | None:
+        """Return the 32-byte excess blinding factor, or None if not a full unshield."""
+        if self.has_unshield_balance_header():
+            return self.get_unshield_balance_header().excess_blinding_factor
+        return None
+
     def _get_header(self, header_type: type[T]) -> T:
         """Return the header of the given type or raise ValueError."""
         for header in self.headers:
@@ -140,139 +217,19 @@ class Transaction(GenericVertex[TransactionStaticMetadata]):
                 return header
         raise ValueError(f'{header_type.__name__.lower()} not found')
 
-    @classmethod
-    def create_from_struct(cls, struct_bytes: bytes, storage: Optional['TransactionStorage'] = None,
-                           *, verbose: VerboseCallback = None) -> Self:
-        tx = cls(storage=storage)
-        buf = tx.get_fields_from_struct(struct_bytes, verbose=verbose)
-
-        if len(buf) < cls.SERIALIZATION_NONCE_SIZE:
-            raise ValueError('Invalid sequence of bytes')
-
-        [tx.nonce, ], buf = unpack('!I', buf)
-        if verbose:
-            verbose('nonce', tx.nonce)
-
-        while buf:
-            buf = tx.get_header_from_bytes(buf, verbose=verbose)
-
-        tx.update_hash()
-
-        return tx
-
-    def get_funds_fields_from_struct(self, buf: bytes, *, verbose: VerboseCallback = None) -> bytes:
-        """ Gets all funds fields for a transaction from a buffer.
-
-        :param buf: Bytes of a serialized transaction
-        :type buf: bytes
-
-        :param verbose: Verbose callback
-        :type verbose: VerboseCallback
-
-        :return: A buffer containing the remaining struct bytes
-        :rtype: bytes
-
-        :raises ValueError: when the sequence of bytes is incorect
-        """
-        (self.signal_bits, self.version, tokens_len, inputs_len, outputs_len), buf = unpack(
-            _FUNDS_FORMAT_STRING,
-            buf
-        )
-
-        if verbose:
-            verbose('signal_bits', self.signal_bits)
-            verbose('version', self.version)
-            verbose('tokens_len', tokens_len)
-            verbose('inputs_len', inputs_len)
-            verbose('outputs_len', outputs_len)
-
-        for _ in range(tokens_len):
-            token_uid, buf = unpack_len(TX_HASH_SIZE, buf)
-            self.tokens.append(token_uid)
-            if verbose:
-                verbose('token_uid', token_uid.hex())
-
-        for _ in range(inputs_len):
-            txin, buf = TxInput.create_from_bytes(buf, verbose=verbose)
-            self.inputs.append(txin)
-
-        for _ in range(outputs_len):
-            txout, buf = TxOutput.create_from_bytes(buf, verbose=verbose)
-            self.outputs.append(txout)
-
-        return buf
-
-    def get_funds_struct(self) -> bytes:
-        """Return the funds data serialization of the transaction
-
-        :return: funds data serialization of the transaction
-        :rtype: bytes
-        """
-        struct_bytes = pack(
-            _FUNDS_FORMAT_STRING,
-            self.signal_bits,
-            self.version,
-            len(self.tokens),
-            len(self.inputs),
-            len(self.outputs)
-        )
-
-        for token_uid in self.tokens:
-            struct_bytes += token_uid
-
-        for tx_input in self.inputs:
-            struct_bytes += bytes(tx_input)
-
-        for tx_output in self.outputs:
-            struct_bytes += bytes(tx_output)
-
-        return struct_bytes
-
     def get_sighash_all(self, *, skip_cache: bool = False) -> bytes:
         """Return a serialization of the inputs, outputs and tokens without including any other field
 
         :return: Serialization of the inputs, outputs and tokens
         :rtype: bytes
         """
-        # This method does not depend on the input itself, however we call it for each one to sign it.
-        # For transactions that have many inputs there is a significant decrease on the verify time
-        # when using this cache, so we call this method only once.
-        if not skip_cache and self._sighash_cache:
-            return self._sighash_cache
-
-        struct_bytes = bytearray(
-            pack(
-                _SIGHASH_ALL_FORMAT_STRING,
-                self.signal_bits,
-                self.version,
-                len(self.tokens),
-                len(self.inputs),
-                len(self.outputs)
-            )
-        )
-
-        for token_uid in self.tokens:
-            struct_bytes += token_uid
-
-        for tx_input in self.inputs:
-            struct_bytes += tx_input.get_sighash_bytes()
-
-        for tx_output in self.outputs:
-            struct_bytes += bytes(tx_output)
-
-        for header in self.headers:
-            struct_bytes += header.get_sighash_bytes()
-
-        ret = bytes(struct_bytes)
-        self._sighash_cache = ret
-        return ret
+        from hathor.transaction.vertex_parser import vertex_serializer
+        return vertex_serializer.serialize_sighash(self, skip_cache=skip_cache)
 
     def get_sighash_all_data(self) -> bytes:
         """Return the sha256 hash of sighash_all"""
-        if self._sighash_data_cache is None:
-            self._sighash_data_cache = hashlib.sha256(self.get_sighash_all()).digest()
-
-        return self._sighash_data_cache
+        from hathor.transaction.vertex_parser import vertex_serializer
+        return vertex_serializer.get_sighash_data(self)
 
     def get_token_uid(self, index: int) -> TokenUid:
         """Returns the token uid with corresponding index from the tx token uid list.
@@ -299,16 +256,27 @@ class Transaction(GenericVertex[TransactionStaticMetadata]):
     def to_json(self, decode_script: bool = False, include_metadata: bool = False) -> dict[str, Any]:
         json = super().to_json(decode_script=decode_script, include_metadata=include_metadata)
         json['tokens'] = [h.hex() for h in self.tokens]
+        json['token_amount_version'] = self.get_token_amount_version().value
 
         if self.is_nano_contract():
             nano_header = self.get_nano_header()
             json['nc_id'] = nano_header.get_contract_id().hex()
             json['nc_seqnum'] = nano_header.nc_seqnum
-            json['nc_blueprint_id'] = nano_header.get_blueprint_id(accept_failed_execution=True).hex()
+            json['nc_blueprint_id'] = nano_header.get_blueprint_id_for_json().hex()
             json['nc_method'] = nano_header.nc_method
             json['nc_args'] = nano_header.nc_args_bytes.hex()
             json['nc_address'] = get_address_b58_from_bytes(nano_header.nc_address)
             json['nc_context'] = nano_header.get_context().to_json()
+
+        if self.has_fees():
+            fee_header = self.get_fee_header()
+            json['fees'] = [
+                {
+                    'token_uid': fee.token_uid.hex(),
+                    'amount': fee.amount,
+                }
+                for fee in fee_header.get_fees()
+            ]
 
         return json
 
@@ -366,7 +334,7 @@ class Transaction(GenericVertex[TransactionStaticMetadata]):
         nano_header = self.get_nano_header()
 
         for action in nano_header.get_actions():
-            rules = BalanceRules.get_rules(self._settings, action)
+            rules = BalanceRules.get_rules(self._settings, action, self.get_token_amount_version())
             if action.token_uid not in token_dict:
                 # we try to load this token version from storage in case it's not in the inputs
                 token_dict[action.token_uid] = TokenInfo(
@@ -382,7 +350,7 @@ class Transaction(GenericVertex[TransactionStaticMetadata]):
 
         fee_header = self.get_fee_header()
         fees = fee_header.get_fees()
-        # we store the total fee amount from the header to be used in the verify_sum
+        # we store the total fee amount from the header to be used in verify_transparent_balance
         token_dict.fees_from_fee_header = fee_header.total_fee_amount()
         for fee in fees:
             token_info = token_dict.get(fee.token_uid)
@@ -410,8 +378,23 @@ class Transaction(GenericVertex[TransactionStaticMetadata]):
 
         for tx_input in self.inputs:
             spent_tx = self.get_spent_tx(tx_input)
-            spent_output = spent_tx.outputs[tx_input.index]
 
+            try:
+                resolved = spent_tx.resolve_spent_output(tx_input.index)
+            except IndexError:
+                # Out of bounds — will be caught by _verify_inputs
+                continue
+
+            # NOTE (PR-5 scope): the SEMANTIC "skip shielded inputs (amount hidden — verified
+            # by the homomorphic balance equation)" decision for token accounting belongs to
+            # PR-5's token-info work. While ENABLE_SHIELDED_TRANSACTIONS is DISABLED (the only
+            # state that ships), tx.shielded_outputs is always empty so this assert cannot fire.
+            # When PR-5 lands, replace this assert with the proper shielded-skip:
+            #     from hathorlib.transaction.shielded_tx_output import OutputMode
+            #     if resolved.mode() != OutputMode.TRANSPARENT:
+            #         continue  # Shielded input: skip for token info (amount is hidden)
+            assert isinstance(resolved, TxOutput)
+            spent_output = resolved
             token_uid = spent_tx.get_token_uid(spent_output.get_token_index())
             token_version = get_token_version(self.storage, nc_block_storage, token_uid)
 
@@ -493,3 +476,9 @@ class Transaction(GenericVertex[TransactionStaticMetadata]):
     def init_static_metadata_from_storage(self, settings: HathorSettings, storage: 'TransactionStorage') -> None:
         static_metadata = TransactionStaticMetadata.create_from_storage(self, settings, storage)
         self.set_static_metadata(static_metadata)
+
+    @final
+    def get_token_amount_version(self) -> TokenAmountVersion:
+        """Return the version under which this transaction's token amounts are interpreted."""
+        # Transactions are always V1. This will be updated in the future.
+        return TokenAmountVersion.V1

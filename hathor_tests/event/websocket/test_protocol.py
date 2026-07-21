@@ -1,16 +1,5 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Optional
 from unittest.mock import ANY, Mock, patch
@@ -102,7 +91,7 @@ def test_send_event_response() -> None:
                         b'"timestamp":456,"signal_bits":0,"version":1,"weight":10.0,"inputs":[],"outputs":[],'
                         b'"parents":[],'
                         b'"tokens":[],"token_name":null,"token_symbol":null,"aux_pow":null,"headers":[],'
-                        b'"metadata":{"hash":"abc",'
+                        b'"name":"tx name","metadata":{"hash":"abc",'
                         b'"spent_outputs":[],"conflict_with":[],"voided_by":[],"received_by":[],'
                         b'"twins":[],"accumulated_weight":10.0,"score":20.0,"accumulated_weight_raw":"1024",'
                         b'"score_raw":"1048576","first_block":null,"height":100,'

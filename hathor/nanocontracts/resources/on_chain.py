@@ -1,18 +1,8 @@
-# Copyright 2025 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import Field
 from twisted.web.http import Request
@@ -44,7 +34,7 @@ class BlueprintOnChainResource(Resource):
         set_cors(request, 'GET')
 
         tx_storage = self.manager.tx_storage
-        assert tx_storage.indexes is not None
+        bp_service = self.manager.blueprint_service
         if tx_storage.indexes.blueprints is None:
             request.setResponseCode(503)
             error_response = ErrorResponse(success=False, error='Blueprint index not initialized')
@@ -67,7 +57,7 @@ class BlueprintOnChainResource(Resource):
             blueprint_list = []
             if bp_id := bytes_from_hex(search):
                 try:
-                    bp_tx = tx_storage.get_on_chain_blueprint(blueprint_id_from_bytes(bp_id))
+                    bp_tx = bp_service.get_on_chain_blueprint(blueprint_id_from_bytes(bp_id))
                 except (BlueprintDoesNotExist, OCBInvalidBlueprintVertexType, OCBBlueprintNotConfirmed):
                     pass
                 else:
@@ -91,10 +81,15 @@ class BlueprintOnChainResource(Resource):
         if not params.before and not params.after:
             iter_bps = bp_index.get_newest() if params.order.is_desc() else bp_index.get_oldest()
         else:
-            ref_tx_id = bytes.fromhex(params.before or params.after or '')
-            assert ref_tx_id
+            ref_tx_id = bytes_from_hex(params.before or params.after or '')
+            if not ref_tx_id:
+                request.setResponseCode(400)
+                error_response = ErrorResponse(
+                    success=False, error='Invalid before/after parameter: not a valid hex string.'
+                )
+                return error_response.json_dumpb()
             try:
-                ref_tx = tx_storage.get_on_chain_blueprint(blueprint_id_from_bytes(ref_tx_id))
+                ref_tx = bp_service.get_on_chain_blueprint(blueprint_id_from_bytes(ref_tx_id))
             except (BlueprintDoesNotExist, OCBInvalidBlueprintVertexType, OCBBlueprintNotConfirmed) as e:
                 request.setResponseCode(404)
                 error_response = ErrorResponse(
@@ -112,7 +107,7 @@ class BlueprintOnChainResource(Resource):
         blueprints = []
         for idx, bp_id in enumerate(iter_bps):
             try:
-                bp_tx = tx_storage.get_on_chain_blueprint(blueprint_id_from_bytes(bp_id))
+                bp_tx = bp_service.get_on_chain_blueprint(blueprint_id_from_bytes(bp_id))
             except (BlueprintDoesNotExist, OCBInvalidBlueprintVertexType):
                 raise AssertionError('bps iterator must always yield valid blueprint txs')
             except OCBBlueprintNotConfirmed:
@@ -152,8 +147,8 @@ class SortOrder(str, Enum):
 
 
 class OnChainBlueprintsParams(QueryParams):
-    before: str | None
-    after: str | None
+    before: str | None = None
+    after: str | None = None
     count: int = Field(default=10, le=100)
     search: str | None = None
     order: SortOrder = SortOrder.DESC
@@ -166,7 +161,7 @@ class OnChainBlueprintItem(Response):
 
 
 class OnChainBlueprintsResponse(Response):
-    success: bool = Field(default=True, const=True)
+    success: Literal[True] = True
     blueprints: list[OnChainBlueprintItem]
     before: str | None
     after: str | None

@@ -1,16 +1,5 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Any
 
@@ -52,10 +41,10 @@ def test_valid_criteria(criteria: dict[str, Any]) -> None:
 @pytest.mark.parametrize(
     ['bit', 'error'],
     [
-        (-10, 'ensure this value is greater than or equal to 0'),
-        (-1, 'ensure this value is greater than or equal to 0'),
-        (2, 'bit must be lower than max_signal_bits: 2 >= 2'),
-        (10, 'bit must be lower than max_signal_bits: 10 >= 2')
+        (-10, 'Input should be greater than or equal to 0'),
+        (-1, 'Input should be greater than or equal to 0'),
+        (2, 'Value error, bit must be lower than max_signal_bits: 2 >= 2'),
+        (10, 'Value error, bit must be lower than max_signal_bits: 10 >= 2')
     ]
 )
 def test_bit(bit: int, error: str) -> None:
@@ -70,11 +59,11 @@ def test_bit(bit: int, error: str) -> None:
 @pytest.mark.parametrize(
     ['start_height', 'error'],
     [
-        (-10, 'ensure this value is greater than or equal to 0'),
-        (-1, 'ensure this value is greater than or equal to 0'),
-        (1, 'Should be a multiple of evaluation_interval: 1 % 1000 != 0'),
-        (45, 'Should be a multiple of evaluation_interval: 45 % 1000 != 0'),
-        (100, 'Should be a multiple of evaluation_interval: 100 % 1000 != 0')
+        (-10, 'Input should be greater than or equal to 0'),
+        (-1, 'Input should be greater than or equal to 0'),
+        (1, 'Value error, start_height should be a multiple of evaluation_interval: 1 % 1000 != 0'),
+        (45, 'Value error, start_height should be a multiple of evaluation_interval: 45 % 1000 != 0'),
+        (100, 'Value error, start_height should be a multiple of evaluation_interval: 100 % 1000 != 0')
     ]
 )
 def test_start_height(start_height: int, error: str) -> None:
@@ -89,12 +78,15 @@ def test_start_height(start_height: int, error: str) -> None:
 @pytest.mark.parametrize(
     ['timeout_height', 'error'],
     [
-        (-10, 'ensure this value is greater than or equal to 0'),
-        (-1, 'ensure this value is greater than or equal to 0'),
-        (1, 'timeout_height must be at least two evaluation intervals after the start_height: 1 < 3000'),
-        (45, 'timeout_height must be at least two evaluation intervals after the start_height: 45 < 3000'),
-        (100, 'timeout_height must be at least two evaluation intervals after the start_height: 100 < 3000'),
-        (3111, 'Should be a multiple of evaluation_interval: 3111 % 1000 != 0')
+        (-10, 'Input should be greater than or equal to 0'),
+        (-1, 'Input should be greater than or equal to 0'),
+        (1, 'Value error, timeout_height must be at least two evaluation intervals after the start_height: '
+            '1 < 3000'),
+        (45, 'Value error, timeout_height must be at least two evaluation intervals after the start_height: '
+             '45 < 3000'),
+        (100, 'Value error, timeout_height must be at least two evaluation intervals after the start_height: '
+              '100 < 3000'),
+        (3111, 'Value error, timeout_height should be a multiple of evaluation_interval: 3111 % 1000 != 0')
     ]
 )
 def test_timeout_height(timeout_height: int, error: str) -> None:
@@ -109,10 +101,10 @@ def test_timeout_height(timeout_height: int, error: str) -> None:
 @pytest.mark.parametrize(
     ['threshold', 'error'],
     [
-        (-10, 'ensure this value is greater than or equal to 0'),
-        (-1, 'ensure this value is greater than or equal to 0'),
-        (1001, 'threshold must not be greater than evaluation_interval: 1001 > 1000'),
-        (100000, 'threshold must not be greater than evaluation_interval: 100000 > 1000')
+        (-10, 'Input should be greater than or equal to 0'),
+        (-1, 'Input should be greater than or equal to 0'),
+        (1001, 'Value error, threshold must not be greater than evaluation_interval: 1001 > 1000'),
+        (100000, 'Value error, threshold must not be greater than evaluation_interval: 100000 > 1000')
     ]
 )
 def test_threshold(threshold: int, error: str) -> None:
@@ -127,11 +119,11 @@ def test_threshold(threshold: int, error: str) -> None:
 @pytest.mark.parametrize(
     ['minimum_activation_height', 'error'],
     [
-        (-10, 'ensure this value is greater than or equal to 0'),
-        (-1, 'ensure this value is greater than or equal to 0'),
-        (1, 'Should be a multiple of evaluation_interval: 1 % 1000 != 0'),
-        (45, 'Should be a multiple of evaluation_interval: 45 % 1000 != 0'),
-        (100, 'Should be a multiple of evaluation_interval: 100 % 1000 != 0'),
+        (-10, 'Input should be greater than or equal to 0'),
+        (-1, 'Input should be greater than or equal to 0'),
+        (1, 'Value error, minimum_activation_height should be a multiple of evaluation_interval: 1 % 1000 != 0'),
+        (45, 'Value error, minimum_activation_height should be a multiple of evaluation_interval: 45 % 1000 != 0'),
+        (100, 'Value error, minimum_activation_height should be a multiple of evaluation_interval: 100 % 1000 != 0'),
     ]
 )
 def test_minimum_activation_height(minimum_activation_height: int, error: str) -> None:
@@ -143,7 +135,7 @@ def test_minimum_activation_height(minimum_activation_height: int, error: str) -
     assert errors[0]['msg'] == error
 
 
-_invalid_version_msg = r'string does not match regex "^(\d+\.\d+\.\d+(-(rc|alpha|beta)\.\d+)?|nightly-[a-f0-9]{7,8})$"'
+_invalid_version_msg = r"String should match pattern '^(\d+\.\d+\.\d+(-(rc|alpha|beta)\.\d+)?|nightly-[a-f0-9]{7,8})$'"
 
 
 @pytest.mark.parametrize(

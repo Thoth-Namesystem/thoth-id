@@ -1,28 +1,19 @@
-# Copyright 2022 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, Optional
+from typing import Optional
 
-from pydantic import NonNegativeInt, validator
+from pydantic import ConfigDict, NonNegativeInt, model_validator
 
-from hathor.event.model.event_data import BaseEventData, EventData
+from hathor.event.model.event_data import EventData
 from hathor.event.model.event_type import EventType
 from hathor.pubsub import EventArguments
 from hathor.utils.pydantic import BaseModel
 
 
-class BaseEvent(BaseModel, use_enum_values=True):
+class BaseEvent(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
     # Event unique id, determines event order
     id: NonNegativeInt
     # Timestamp in which the event was emitted, this follows the unix_timestamp format, it's only informative, events
@@ -57,12 +48,12 @@ class BaseEvent(BaseModel, use_enum_values=True):
             group_id=group_id,
         )
 
-    @validator('data')
-    def data_type_must_match_event_type(cls, v: BaseEventData, values: dict[str, Any]) -> BaseEventData:
-        event_type = EventType(values['type'])
+    @model_validator(mode='after')
+    def data_type_must_match_event_type(self) -> 'BaseEvent':
+        event_type = EventType(self.type)
         expected_data_type = event_type.data_type()
 
-        if type(v) is not expected_data_type:
+        if type(self.data) is not expected_data_type:
             raise ValueError('event data type does not match event type')
 
-        return v
+        return self

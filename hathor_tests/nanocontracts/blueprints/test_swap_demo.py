@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from hathor.nanocontracts.nc_types import make_nc_type_for_arg_type as make_nc_type
 from hathor.nanocontracts.storage.contract_storage import Balance
 from hathor.nanocontracts.types import NCDepositAction, NCWithdrawalAction, TokenUid
@@ -14,7 +17,7 @@ class SwapDemoTestCase(BlueprintTestCase):
         self.blueprint_id = self.gen_random_blueprint_id()
         self.contract_id = self.gen_random_contract_id()
 
-        self.nc_catalog.blueprints[self.blueprint_id] = SwapDemo
+        self.blueprint_service.register_blueprint(self.blueprint_id, SwapDemo)
 
         # Test doubles:
         self.token_a = self.gen_random_token_uid()

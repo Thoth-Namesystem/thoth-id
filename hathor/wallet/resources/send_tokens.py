@@ -1,16 +1,5 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Any, Optional, Union
 
@@ -22,6 +11,7 @@ from hathor.api_util import Resource, render_options, set_cors
 from hathor.conf.settings import HathorSettings
 from hathor.crypto.util import decode_address
 from hathor.exception import InvalidNewTransaction
+from hathor.feature_activation.utils import Features
 from hathor.manager import HathorManager
 from hathor.transaction import Transaction
 from hathor.transaction.exceptions import TxValidationError
@@ -129,12 +119,12 @@ class SendTokensResource(Resource):
         tx.parents = values['parents']
         weight = values['weight']
         if weight is None:
-            weight = self.manager.daa.minimum_tx_weight(tx)
+            weight = self.manager.daa_factory.minimum_tx_weight(tx)
         tx.weight = weight
         self.manager.cpu_mining_service.resolve(tx)
         tx.init_static_metadata_from_storage(self._settings, self.manager.tx_storage)
         best_block = self.manager.tx_storage.get_best_block()
-        params = VerificationParams.default_for_mempool(best_block=best_block)
+        params = VerificationParams.for_mempool(best_block=best_block, features=Features.all_enabled())
         self.manager.verification_service.verify(tx, params)
         return tx
 

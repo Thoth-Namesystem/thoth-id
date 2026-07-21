@@ -1,24 +1,16 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
 import heapq
 from abc import ABC, abstractmethod
 from collections import deque
+from enum import StrEnum, auto
 from itertools import chain
-from typing import TYPE_CHECKING, Iterable, Iterator, Optional, Union
+from typing import TYPE_CHECKING, Iterable, Iterator, Union
+
+from typing_extensions import assert_never
 
 if TYPE_CHECKING:
     from hathor.transaction import BaseTransaction  # noqa: F401
@@ -41,6 +33,11 @@ class HeapItem:
 
     def __le__(self, other: 'HeapItem') -> bool:
         return self.key <= other.key
+
+
+class _WalkOp(StrEnum):
+    ADD_NEIGHBORS = auto()
+    SKIP_NEIGHBORS = auto()
 
 
 class GenericWalk(ABC):
@@ -72,7 +69,7 @@ class GenericWalk(ABC):
         self.is_left_to_right = is_left_to_right
 
         self._reverse_heap: bool = not self.is_left_to_right
-        self._ignore_neighbors: Optional['BaseTransaction'] = None
+        self._walk_op: _WalkOp | None = None
 
     @abstractmethod
     def _push_visit(self, tx: 'BaseTransaction') -> None:
@@ -111,7 +108,7 @@ class GenericWalk(ABC):
 
         return it
 
-    def add_neighbors(self, tx: 'BaseTransaction') -> None:
+    def _add_neighbors(self, tx: 'BaseTransaction') -> None:
         """ Add neighbors of `tx` to be visited later according to the configuration.
         """
         it = self._get_iterator(tx, is_left_to_right=self.is_left_to_right)
@@ -121,11 +118,21 @@ class GenericWalk(ABC):
                 neighbor = self.storage.get_vertex(_hash)
                 self._push_visit(neighbor)
 
-    def skip_neighbors(self, tx: 'BaseTransaction') -> None:
-        """ Mark `tx` to have its neighbors skipped, i.e., they will not be added to be
-        visited later. `tx` must be equal to the current yielded transaction.
+    def _set_walk_op(self, op: _WalkOp) -> None:
+        assert self._walk_op is None, 'walk op is already set'
+        self._walk_op = op
+
+    def add_neighbors(self) -> None:
+        """ Mark current item to have its neighbors added, i.e., they will be added to be
+        visited later.
         """
-        self._ignore_neighbors = tx
+        self._set_walk_op(_WalkOp.ADD_NEIGHBORS)
+
+    def skip_neighbors(self) -> None:
+        """ Mark current item to have its neighbors skipped, i.e., they will not be added to be
+        visited later.
+        """
+        self._set_walk_op(_WalkOp.SKIP_NEIGHBORS)
 
     def run(self, root: Union['BaseTransaction', Iterable['BaseTransaction']], *,
             skip_root: bool = False) -> Iterator['BaseTransaction']:
@@ -144,16 +151,21 @@ class GenericWalk(ABC):
             if not skip_root:
                 self._push_visit(root)
             else:
-                self.add_neighbors(root)
+                self._add_neighbors(root)
 
         while not self._is_empty():
             tx = self._pop_visit()
             yield tx
-            if not self._ignore_neighbors:
-                self.add_neighbors(tx)
-            else:
-                assert self._ignore_neighbors == tx
-                self._ignore_neighbors = None
+            match self._walk_op:
+                case None:
+                    raise ValueError('you must explicitly add or skip neighbors')
+                case _WalkOp.ADD_NEIGHBORS:
+                    self._add_neighbors(tx)
+                    self._walk_op = None
+                case _WalkOp.SKIP_NEIGHBORS:
+                    self._walk_op = None
+                case _:
+                    assert_never(self._walk_op)
 
 
 class BFSTimestampWalk(GenericWalk):

@@ -1,16 +1,5 @@
-# Copyright 2024 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
@@ -23,7 +12,7 @@ from structlog import get_logger
 from typing_extensions import Self
 
 from hathor.conf.settings import HathorSettings
-from hathor.daa import DifficultyAdjustmentAlgorithm
+from hathor.daa import DAAFactory
 from hathor.dag_builder.artifacts import DAGArtifacts
 from hathor.dag_builder.tokenizer import Token, TokenType
 from hathor.dag_builder.types import (
@@ -40,6 +29,7 @@ from hathor.manager import HathorManager
 from hathor.nanocontracts.catalog import NCBlueprintCatalog
 from hathor.util import initialize_hd_wallet
 from hathor.wallet import BaseWallet
+from hathorlib.token_amount import SignedAmount
 
 logger = get_logger()
 
@@ -53,7 +43,7 @@ class DAGBuilder:
     def __init__(
         self,
         settings: HathorSettings,
-        daa: DifficultyAdjustmentAlgorithm,
+        daa_factory: DAAFactory,
         genesis_wallet: BaseWallet,
         wallet_factory: WalletFactoryType,
         vertex_resolver: VertexResolverType,
@@ -68,11 +58,11 @@ class DAGBuilder:
 
         self._nodes: dict[str, DAGNode] = {}
         self._tokenize = tokenize
-        self._filler = DefaultFiller(self, settings, daa)
+        self._filler = DefaultFiller(self, settings, daa_factory)
         self._exporter = VertexExporter(
             builder=self,
             settings=settings,
-            daa=daa,
+            daa_factory=daa_factory,
             genesis_wallet=genesis_wallet,
             wallet_factory=wallet_factory,
             vertex_resolver=vertex_resolver,
@@ -88,14 +78,13 @@ class DAGBuilder:
         blueprints_module: ModuleType | None = None
     ) -> DAGBuilder:
         """Create a DAGBuilder instance from a HathorManager instance."""
-        assert manager.tx_storage.nc_catalog
         return DAGBuilder(
             settings=manager._settings,
-            daa=manager.daa,
+            daa_factory=manager.daa_factory,
             genesis_wallet=initialize_hd_wallet(genesis_words),
             wallet_factory=wallet_factory,
             vertex_resolver=lambda x: manager.cpu_mining_service.resolve(x),
-            nc_catalog=manager.tx_storage.nc_catalog,
+            nc_catalog=manager.blueprint_service.nc_catalog,
             blueprints_module=blueprints_module,
         )
 
@@ -152,7 +141,7 @@ class DAGBuilder:
         from_node.deps.add(_to)
         return self
 
-    def update_balance(self, name: str, token: str, value: int) -> Self:
+    def update_balance(self, name: str, token: str, value: SignedAmount) -> Self:
         """Update the expected balance for a given token, where balance = sum(outputs) - sum(inputs).
 
         =0 means sum(txouts) = sum(txins)
@@ -160,7 +149,7 @@ class DAGBuilder:
         <0 means sum(txouts) < sum(txins), e.g., deposit
         """
         node = self._get_or_create_node(name)
-        node.balances[token] = node.balances.get(token, 0) + value
+        node.balances[token] = node.balances.get(token, SignedAmount(0)) + value
         if token != 'HTR':
             self._get_or_create_node(token, default_type=DAGNodeType.Token)
             self.add_deps(name, token)

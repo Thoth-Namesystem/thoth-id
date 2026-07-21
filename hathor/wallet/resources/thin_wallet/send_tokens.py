@@ -1,20 +1,10 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import struct
 from dataclasses import dataclass
 from functools import partial
+from json import JSONDecodeError
 from typing import Any, Optional
 
 from structlog import get_logger
@@ -27,6 +17,7 @@ from hathor._openapi.register import register_resource
 from hathor.api_util import Resource, render_options, set_cors
 from hathor.conf.get_settings import get_global_settings
 from hathor.exception import InvalidNewTransaction
+from hathor.feature_activation.utils import Features
 from hathor.reactor import get_global_reactor
 from hathor.transaction import Transaction
 from hathor.transaction.exceptions import TxValidationError
@@ -84,7 +75,7 @@ class SendTokensResource(Resource):
         assert request.content is not None
         raw_data = request.content.read()
 
-        if raw_data is None:
+        if not raw_data:
             return self.return_POST(
                 False,
                 'Missing POST data JSON',
@@ -93,6 +84,12 @@ class SendTokensResource(Resource):
 
         try:
             post_data = json_loadb(raw_data)
+        except JSONDecodeError:
+            return self.return_POST(
+                False,
+                'Invalid JSON in POST data',
+                return_code='invalid_json'
+            )
         except AttributeError:
             return self.return_POST(
                 False,
@@ -155,10 +152,9 @@ class SendTokensResource(Resource):
 
         # When using stratum to solve pow, we already set timestamp and parents
         stratum_deferred: Deferred[None] = Deferred()
-        # FIXME: Skipping mypy on the line below for now, as it looks like it's wrong but we don't have tests for it.
-        stratum_deferred.addCallback(self._stratum_deferred_resolve, request)  # type: ignore
-
-        fn_timeout = partial(self._stratum_timeout, request=request, tx=tx)
+        # FIXME: Skipping mypy on the lines below for now, as it looks like it's wrong but we don't have tests for it.
+        stratum_deferred.addCallback(self._stratum_deferred_resolve, request)  # type: ignore[call-overload]
+        fn_timeout = partial(self._stratum_timeout, request=request, tx=tx)  # type: ignore[call-arg]
         stratum_deferred.addTimeout(TIMEOUT_STRATUM_RESOLVE_POW, self.manager.reactor, onTimeoutCancel=fn_timeout)
 
         # this prepares transaction for mining
@@ -216,7 +212,7 @@ class SendTokensResource(Resource):
         """ Method to verify the transaction that runs in a separated thread
         """
         best_block = self.manager.tx_storage.get_best_block()
-        params = VerificationParams.default_for_mempool(best_block=best_block)
+        params = VerificationParams.for_mempool(best_block=best_block, features=Features.all_enabled())
         self.manager.verification_service.verify(context.tx, params)
         return context
 
@@ -275,7 +271,7 @@ class SendTokensResource(Resource):
         context.tx.update_hash()
         context.tx.init_static_metadata_from_storage(self._settings, self.manager.tx_storage)
         best_block = self.manager.tx_storage.get_best_block()
-        params = VerificationParams.default_for_mempool(best_block=best_block)
+        params = VerificationParams.for_mempool(best_block=best_block, features=Features.all_enabled())
         self.manager.verification_service.verify(context.tx, params)
         return context
 

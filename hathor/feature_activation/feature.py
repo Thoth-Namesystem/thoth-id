@@ -1,22 +1,11 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
-from enum import Enum, unique
+from enum import StrEnum, unique
 
 
 @unique
-class Feature(str, Enum):
+class Feature(StrEnum):
     """
     An enum containing all features that participate in the feature activation process, past or future, activated
     or not, for all networks. Features should NOT be removed from this enum, to preserve history. Their values
@@ -30,5 +19,15 @@ class Feature(str, Enum):
 
     INCREASE_MAX_MERKLE_PATH_LENGTH = 'INCREASE_MAX_MERKLE_PATH_LENGTH'
     COUNT_CHECKDATASIG_OP = 'COUNT_CHECKDATASIG_OP'
-
     NANO_CONTRACTS = 'NANO_CONTRACTS'
+
+    FAILED_FEE_TOKENS = 'FAILED_FEE_TOKENS'
+    FEE_TOKENS = 'FEE_TOKENS'
+
+    FAILED_OPCODES_V2 = 'FAILED_OPCODES_V2'
+    OPCODES_V2 = 'OPCODES_V2'
+
+    RESTRICT_DUP_ACTIONS = 'RESTRICT_DUP_ACTIONS'
+    REDUCE_DAA_TARGET = 'REDUCE_DAA_TARGET'
+
+    SHIELDED_TRANSACTIONS = 'SHIELDED_TRANSACTIONS'

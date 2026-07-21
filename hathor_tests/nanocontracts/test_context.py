@@ -1,7 +1,9 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 import copy
 
 from hathor.nanocontracts import Blueprint, public
-from hathor.nanocontracts.catalog import NCBlueprintCatalog
 from hathor.nanocontracts.context import Context
 from hathor.nanocontracts.vertex_data import BlockData, NanoHeaderData, VertexData
 from hathor.transaction import Block, Transaction
@@ -32,9 +34,7 @@ class ContextTestCase(BlueprintTestCase):
         super().setUp()
 
         self.blueprint_id = self.gen_random_contract_id()
-        self.manager.tx_storage.nc_catalog = NCBlueprintCatalog({
-            self.blueprint_id: RememberVertexDataBlueprint,
-        })
+        self.manager.blueprint_service.register_blueprint(self.blueprint_id, RememberVertexDataBlueprint)
         self.address = self.gen_random_address()
 
         # clear vertex-data before and after
@@ -72,7 +72,7 @@ class ContextTestCase(BlueprintTestCase):
         self.assertEqual(vertex_data.version, TxVersion.REGULAR_TRANSACTION)
         self.assertEqual(vertex_data.hash, nc2.hash)
         self.assertEqual(vertex_data.signal_bits, 0)
-        self.assertEqual(vertex_data.weight, 1.0)
+        self.assertEqual(vertex_data.work, 2)
         self.assertEqual(vertex_data.tokens, ())
         self.assertEqual(block_data.hash, b12.hash)
         self.assertEqual(block_data.timestamp, b12.timestamp)

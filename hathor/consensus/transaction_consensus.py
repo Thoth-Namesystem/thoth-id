@@ -1,22 +1,12 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import TYPE_CHECKING, Any, Iterable, cast
 
 from structlog import get_logger
 
 from hathor.conf.get_settings import get_global_settings
+from hathor.execution_manager import non_critical_code
 from hathor.transaction import BaseTransaction, Block, Transaction, TxInput
 from hathor.types import VertexId
 from hathor.util import classproperty
@@ -228,7 +218,9 @@ class TransactionConsensusAlgorithm:
         if voided_by:
             meta.voided_by = voided_by.copy()
             self.context.save(tx)
-            tx.storage.del_from_indexes(tx)
+            tx.storage.indexes.del_from_critical_indexes(tx)
+            with non_critical_code(self.log):
+                tx.storage.indexes.del_from_non_critical_indexes(tx)
 
         # Check conflicts of the transactions voiding us.
         for h in voided_by:
@@ -391,7 +383,7 @@ class TransactionConsensusAlgorithm:
 
             meta2 = tx2.get_metadata()
             if not (meta2.voided_by and voided_hash in meta2.voided_by):
-                bfs.skip_neighbors(tx2)
+                bfs.skip_neighbors()
                 continue
             if meta2.voided_by:
                 meta2.voided_by.discard(voided_hash)
@@ -399,9 +391,11 @@ class TransactionConsensusAlgorithm:
                 check_list.append(tx2)
             if not meta2.voided_by:
                 meta2.voided_by = None
-                tx.storage.add_to_indexes(tx2)
+                with non_critical_code(self.log):
+                    tx.storage.indexes.add_to_non_critical_indexes(tx2)
             self.context.save(tx2)
             self.assert_valid_consensus(tx2)
+            bfs.add_neighbors()
 
         from hathor.transaction import Transaction
         for tx2 in check_list:
@@ -488,7 +482,6 @@ class TransactionConsensusAlgorithm:
             if tx2.is_block:
                 assert isinstance(tx2, Block)
                 self.context.block_algorithm.mark_as_voided(tx2)
-                tx2.storage.update_best_block_tips_cache(None)
 
             assert not meta2.voided_by or voided_hash not in meta2.voided_by
             if tx2.hash != tx.hash and meta2.conflict_with and not meta2.voided_by:
@@ -503,8 +496,11 @@ class TransactionConsensusAlgorithm:
                 # All voided transactions with conflicts must have their accumulated weight calculated.
                 tx2.update_accumulated_weight(save_file=False)
             self.context.save(tx2)
-            tx2.storage.del_from_indexes(tx2, relax_assert=True)
+            tx2.storage.indexes.del_from_critical_indexes(tx2)
+            with non_critical_code(self.log):
+                tx2.storage.indexes.del_from_non_critical_indexes(tx2)
             self.assert_valid_consensus(tx2)
+            bfs.add_neighbors()
 
         for tx2 in check_list:
             self.check_conflicts(tx2)

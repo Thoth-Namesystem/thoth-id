@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 import base64
 import os
 import string
@@ -10,7 +13,6 @@ from typing import Any, Optional, cast
 import requests
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import ec
-from hathorlib.scripts import DataScript
 from twisted.internet.task import Clock
 
 from hathor.conf import HathorSettings
@@ -29,6 +31,7 @@ from hathor.transaction.token_creation_tx import TokenCreationTransaction
 from hathor.transaction.token_info import TokenVersion
 from hathor.transaction.util import get_deposit_token_deposit_amount
 from hathor.util import Random
+from hathorlib.scripts import DataScript
 
 settings = HathorSettings()
 
@@ -157,6 +160,9 @@ def gen_custom_base_tx(manager: HathorManager,
         elif not tx_base.is_block:
             tx2.parents.append(tx_base.parents[0])
         else:
+            # the best block timestamp may be ahead of the clock (e.g. blocks mined less than a second apart in
+            # the simulator), and `get_new_tx_parents` requires a timestamp not older than the best block's
+            tx2.timestamp = max(tx2.timestamp, manager.get_timestamp_for_new_vertex())
             tx2.parents.extend(manager.get_new_tx_parents(tx2.timestamp))
             tx2.parents = tx2.parents[:2]
     assert len(tx2.parents) == 2
@@ -181,8 +187,9 @@ def add_new_tx(
     manager: HathorManager,
     address: str,
     value: int,
-    advance_clock: int | None = None,
-    propagate: bool = True
+    advance_clock: int = 1,
+    propagate: bool = True,
+    name: str | None = None,
 ) -> Transaction:
     """ Create, resolve and propagate a new tx
 
@@ -199,6 +206,7 @@ def add_new_tx(
         :rtype: :py:class:`hathor.transaction.transaction.Transaction`
     """
     tx = gen_new_tx(manager, address, value)
+    tx.name = name
     if propagate:
         manager.propagate_tx(tx)
     if advance_clock:
@@ -209,8 +217,9 @@ def add_new_tx(
 def add_new_transactions(
     manager: HathorManager,
     num_txs: int,
-    advance_clock: int | None = None,
-    propagate: bool = True
+    advance_clock: int = 1,
+    propagate: bool = True,
+    name: str | None = None,
 ) -> list[Transaction]:
     """ Create, resolve and propagate some transactions
 
@@ -224,10 +233,11 @@ def add_new_transactions(
         :rtype: list[Transaction]
     """
     txs = []
-    for _ in range(num_txs):
+    for i in range(num_txs):
         address = 'HGov979VaeyMQ92ubYcnVooP6qPzUJU8Ro'
         value = manager.rng.choice([5, 10, 15, 20])
-        tx = add_new_tx(manager, address, value, advance_clock, propagate)
+        tx_name = f'{name}-{i}' if num_txs > 1 else name
+        tx = add_new_tx(manager, address, value, advance_clock, propagate, name=tx_name)
         txs.append(tx)
     return txs
 
@@ -477,14 +487,14 @@ def create_tokens(manager: 'HathorManager', address_b58: Optional[str] = None, m
             block = add_new_block(manager, advance_clock=1, address=address)
             deposit_input.append(TxInput(block.hash, 0, b''))
             total_reward += block.outputs[0].value
-            timestamp = block.timestamp + 1
 
         if total_reward > deposit_amount:
             change_output = TxOutput(total_reward - deposit_amount, script, 0)
         else:
             change_output = None
 
-        add_blocks_unlock_reward(manager)
+        unlock_blocks = add_blocks_unlock_reward(manager)
+        timestamp = unlock_blocks[-1].timestamp + 1
         assert timestamp is not None
         parents = manager.get_new_tx_parents(timestamp)
 
@@ -531,9 +541,15 @@ def create_tokens(manager: 'HathorManager', address_b58: Optional[str] = None, m
     return tx
 
 
-def create_fee_tokens(manager: 'HathorManager', address_b58: Optional[str] = None, mint_amount: int = 300,
-                      token_name: str = 'TestFeeCoin', token_symbol: str = 'TFC',
-                      genesis_output_amount: Optional[int] = None) -> TokenCreationTransaction:
+def create_fee_tokens(
+    manager: 'HathorManager',
+    address_b58: Optional[str] = None,
+    mint_amount: int = 300,
+    token_name: str = 'TestFeeCoin',
+    token_symbol: str = 'TFC',
+    genesis_output_amount: Optional[int] = None,
+    propagate: bool = True,
+) -> TokenCreationTransaction:
     """Creates a new token and propagates a tx with the following UTXOs:
     0. some tokens (already mint some tokens so they can be transferred);
     1. mint authority;
@@ -586,7 +602,7 @@ def create_fee_tokens(manager: 'HathorManager', address_b58: Optional[str] = Non
     outputs.append(TxOutput(TxOutput.TOKEN_MELT_MASK, script, 0b10000001))
 
     # fee
-    fee = settings.FEE_PER_OUTPUT
+    fee = settings.FEE_PER_OUTPUT_V1
 
     # fee output
     outputs.append(TxOutput(genesis_block.outputs[0].value - fee - (genesis_output_amount or 0), script, 0))
@@ -618,31 +634,13 @@ def create_fee_tokens(manager: 'HathorManager', address_b58: Optional[str] = Non
         input_.data = P2PKH.create_input_data(public_bytes, signature)
 
     manager.cpu_mining_service.resolve(tx)
-    manager.propagate_tx(tx)
-    assert isinstance(manager.reactor, Clock)
-    manager.reactor.advance(8)
+
+    if propagate:
+        manager.propagate_tx(tx)
+        assert isinstance(manager.reactor, Clock)
+        manager.reactor.advance(8)
 
     return tx
-
-
-def get_deposit_token_amount_from_htr(htr_amount: int) -> int:
-    """
-    Calculate how many tokens correspond to a given HTR amount based on the
-    configured TOKEN_DEPOSIT_PERCENTAGE.
-
-    Returns
-    -------
-    int
-        The smallest integer number of tokens that covers the given HTR amount.
-    Raises
-    ------
-    AssertionError
-        If the computed token amount is not an integer (this should not occur
-        when TOKEN_DEPOSIT_PERCENTAGE is a positive divisor).
-    """
-    token_amount = abs(htr_amount / settings.TOKEN_DEPOSIT_PERCENTAGE)
-    assert token_amount.is_integer()
-    return int(token_amount)
 
 
 def create_script_with_sigops(nops: int) -> bytes:
@@ -740,6 +738,7 @@ class EventMocker:
     next_id: int = 0
     tx_data = TxData(
         hash='abc',
+        name='tx name',
         nonce=123,
         timestamp=456,
         signal_bits=0,

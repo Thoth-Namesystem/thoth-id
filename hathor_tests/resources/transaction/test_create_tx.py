@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 import base64
 
 from twisted.internet.defer import inlineCallbacks
@@ -193,7 +196,7 @@ class TransactionTest(_BaseResourceTest._ResourceTest):
 
     @inlineCallbacks
     def test_tx_propagate(self):
-        self.manager.daa.TEST_MODE = TestMode.DISABLED  # disable test_mode so the weight is not 1
+        self.manager.daa_factory.TEST_MODE = TestMode.DISABLED  # disable test_mode so the weight is not 1
         src_tx = self.unspent_tx
         output_address = 'HNXsVtRUmwDCtpcCJUrH4QiHo9kUKx199A'
         resp = (yield self.web.post('create_tx', {
@@ -231,7 +234,7 @@ class TransactionTest(_BaseResourceTest._ResourceTest):
 
     @inlineCallbacks
     def test_tx_propagate_multiple_inputs(self):
-        self.manager.daa.TEST_MODE = TestMode.DISABLED  # disable test_mode so the weight is not 1
+        self.manager.daa_factory.TEST_MODE = TestMode.DISABLED  # disable test_mode so the weight is not 1
         output_address = 'HNXsVtRUmwDCtpcCJUrH4QiHo9kUKx199A'
         resp = (yield self.web.post('create_tx', {
             'inputs': [
@@ -314,7 +317,7 @@ class TransactionTest(_BaseResourceTest._ResourceTest):
             ]
         })).json_value()
         self.assertEqual(resp, {
-            'error': 'HTR balance is different than expected. (amount=1, expected=0)'
+            'error': 'There\'s an invalid surplus of HTR. (amount=1, expected=0)'
         })
 
     @inlineCallbacks
@@ -334,7 +337,7 @@ class TransactionTest(_BaseResourceTest._ResourceTest):
             ]
         })).json_value()
         self.assertEqual(resp, {
-            'error': 'HTR balance is different than expected. (amount=-1, expected=0)'
+            'error': 'There\'s an invalid deficit of HTR. (amount=-1, expected=0)'
         })
 
     @inlineCallbacks

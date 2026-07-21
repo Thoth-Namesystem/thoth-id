@@ -1,16 +1,5 @@
-# Copyright 2023 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from abc import abstractmethod
 from typing import Iterable, Optional
@@ -69,6 +58,11 @@ class NCHistoryIndex(TxGroupIndex[bytes]):
         """Get a list of tx_ids sorted by timestamp for a given contract_id starting from the newest.
         """
         return self._get_sorted_from_key(contract_id, reverse=True)
+
+    def get_oldest(self, contract_id: bytes) -> Iterable[bytes]:
+        """Get a list of tx_ids sorted by timestamp for a given contract_id starting from the oldest.
+        """
+        return self._get_sorted_from_key(contract_id, reverse=False)
 
     def get_older(self, contract_id: bytes, tx_start: Optional[BaseTransaction] = None) -> Iterable[bytes]:
         """Get a list of tx_ids sorted by timestamp for a given contract_id that are older than tx_start.

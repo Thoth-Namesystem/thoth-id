@@ -1,16 +1,5 @@
-# Copyright 2023 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import TYPE_CHECKING, Iterator, NamedTuple
 
@@ -61,31 +50,22 @@ class Scope(NamedTuple):
             return False
         if not tx_meta.validation.is_fully_connected() and not self.include_partial:
             return False
-        # XXX: self.topologial_order doesn't affect self.match()
+        # XXX: self.topological_order doesn't affect self.match()
         # passed all checks
         return True
 
     def get_iterator(self, tx_storage: 'TransactionStorage') -> Iterator[BaseTransaction]:
-        """ This method returns an iterator that only yields transaction that match the current scope.
         """
-        iterator: Iterator[BaseTransaction]
-        # XXX: this is to mark if the chosen iterator will yield partial transactions
-        iterator_covers_partial: bool
-        if self.topological_order:
-            iterator = tx_storage.topological_iterator()
-            iterator_covers_partial = False
-        else:
-            iterator = tx_storage.get_all_transactions()
-            iterator_covers_partial = True
-        for tx in iterator:
-            if self.matches(tx):
-                yield tx
-        if self.include_partial and not iterator_covers_partial:
-            # if partial transactions are needed and were not already covered, we use get_all_transactions, which
-            # includes partial transactions, to yield them, skipping all that aren't partial
+        This method returns an iterator that yields alls transactions in respect to this Scope's ordering only,
+        disregarding whether the tx matches the Scope or not. It's the caller's responsibility to match them.
+        """
+        if not self.topological_order:
+            yield from tx_storage.get_all_transactions()
+            return
+
+        yield from tx_storage.topological_iterator()
+        if self.include_partial:
             for tx in tx_storage.get_all_transactions():
                 tx_meta = tx.get_metadata()
-                if tx_meta.validation.is_fully_connected():
-                    continue
-                if self.matches(tx):
+                if not tx_meta.validation.is_fully_connected():
                     yield tx

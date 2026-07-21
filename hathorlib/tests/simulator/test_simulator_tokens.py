@@ -1,0 +1,93 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
+"""Token deposit/withdrawal tests."""
+
+import pytest
+
+from hathorlib.nanocontracts.exception import NCFail
+from hathorlib.nanocontracts.simulator import NanoSimulator, NanoSimulatorBuilder
+from hathorlib.nanocontracts.types import NC_HTR_TOKEN_UID
+
+from .blueprints import Vault
+
+
+class TestSimulatorTokens:
+    def test_deposit_on_initialize(self) -> None:
+        sim = NanoSimulatorBuilder().build()
+        bid = sim.register_blueprint_class(Vault)
+        alice = sim.create_address('alice')
+
+        result = sim.create_contract_raw(
+            bid,
+            caller=alice,
+            actions=[NanoSimulator.deposit(NC_HTR_TOKEN_UID, 1000)],
+        )
+        assert sim.call_view(result.contract_id, 'get_total') == 1000
+
+    def test_deposit_and_withdraw(self) -> None:
+        sim = NanoSimulatorBuilder().build()
+        bid = sim.register_blueprint_class(Vault)
+        alice = sim.create_address('alice')
+
+        result = sim.create_contract_raw(
+            bid,
+            caller=alice,
+            actions=[NanoSimulator.deposit(NC_HTR_TOKEN_UID, 1000)],
+        )
+        cid = result.contract_id
+
+        sim.call_public(
+            cid, 'withdraw',
+            caller=alice,
+            args=(300,),
+            actions=[NanoSimulator.withdrawal(NC_HTR_TOKEN_UID, 300)],
+        )
+        assert sim.call_view(cid, 'get_total') == 700
+
+    def test_multiple_deposits(self) -> None:
+        sim = NanoSimulatorBuilder().build()
+        bid = sim.register_blueprint_class(Vault)
+        alice = sim.create_address('alice')
+
+        result = sim.create_contract_raw(
+            bid,
+            caller=alice,
+            actions=[NanoSimulator.deposit(NC_HTR_TOKEN_UID, 500)],
+        )
+        cid = result.contract_id
+
+        sim.call_public(
+            cid, 'deposit_more',
+            caller=alice,
+            actions=[NanoSimulator.deposit(NC_HTR_TOKEN_UID, 300)],
+        )
+        assert sim.call_view(cid, 'get_total') == 800
+
+    def test_withdraw_too_much_fails(self) -> None:
+        sim = NanoSimulatorBuilder().build()
+        bid = sim.register_blueprint_class(Vault)
+        alice = sim.create_address('alice')
+
+        result = sim.create_contract_raw(
+            bid,
+            caller=alice,
+            actions=[NanoSimulator.deposit(NC_HTR_TOKEN_UID, 100)],
+        )
+
+        with pytest.raises(NCFail, match='Insufficient funds'):
+            sim.call_public(
+                result.contract_id, 'withdraw',
+                caller=alice,
+                args=(200,),
+                actions=[NanoSimulator.withdrawal(NC_HTR_TOKEN_UID, 200)],
+            )
+
+        # Balance unchanged
+        assert sim.call_view(result.contract_id, 'get_total') == 100
+
+    def test_create_custom_token(self) -> None:
+        sim = NanoSimulatorBuilder().build()
+        token_uid = sim.create_token('TestToken', 'TST')
+        assert token_uid is not None
+        assert len(token_uid) == 32

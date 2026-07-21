@@ -1,16 +1,5 @@
-#  Copyright 2025 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import re
 
@@ -39,6 +28,36 @@ class TestExecutionVerification(BlueprintTestCase):
         super().setUp()
         self.blueprint_id = self._register_blueprint_class(MyBlueprint)
         self.contract_id = self.gen_random_contract_id()
+
+    def test_successful_create_keeps_changes_pending_until_explicit_commit(self) -> None:
+        runner = self.runner._runner
+
+        assert not runner.has_pending_changes()
+        assert not runner.block_storage.has_contract(self.contract_id)
+
+        runner.create_contract(self.contract_id, self.blueprint_id, self.create_context(), 123)
+
+        assert runner.has_pending_changes()
+        assert not runner.block_storage.has_contract(self.contract_id)
+
+        runner.commit_pending_changes()
+
+        assert not runner.has_pending_changes()
+        assert runner.block_storage.has_contract(self.contract_id)
+
+    def test_successful_create_can_be_explicitly_discarded(self) -> None:
+        runner = self.runner._runner
+
+        runner.create_contract(self.contract_id, self.blueprint_id, self.create_context(), 123)
+
+        assert runner.has_pending_changes()
+        assert not runner.block_storage.has_contract(self.contract_id)
+
+        runner.discard_pending_changes()
+
+        assert not runner.has_pending_changes()
+        assert not runner.has_contract_been_initialized(self.contract_id)
+        assert not runner.block_storage.has_contract(self.contract_id)
 
     def test_blueprint_does_not_exist(self) -> None:
         with pytest.raises(BlueprintDoesNotExist):
@@ -79,6 +98,18 @@ class TestExecutionVerification(BlueprintTestCase):
             )
         assert isinstance(e.value.__cause__, ValueError)
         assert e.value.__cause__.args[0] == 'trailing data'
+
+    def test_failed_create_does_not_leave_contract_initialized(self) -> None:
+        runner = self.runner._runner
+
+        with pytest.raises(NCFail, match=re.escape("initialize() missing required argument: 'a'")):
+            runner.create_contract(self.contract_id, self.blueprint_id, self.create_context())
+
+        assert not runner.has_pending_changes()
+        assert not runner.has_contract_been_initialized(self.contract_id)
+
+        self.runner.create_contract(self.contract_id, self.blueprint_id, self.create_context(), 123)
+        assert self.runner.has_contract_been_initialized(self.contract_id)
 
     @pytest.mark.xfail(strict=True, reason='not implemented yet')
     def test_wrong_arg_type_but_valid_serialization(self) -> None:

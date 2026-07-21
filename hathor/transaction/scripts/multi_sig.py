@@ -1,16 +1,5 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import struct
 from typing import Any, Optional
@@ -143,7 +132,7 @@ class MultiSig(BaseScript):
             timelock = None
             pushdata_timelock = groups[0]
             if pushdata_timelock:
-                timelock_bytes = pushdata_timelock[1:]
+                timelock_bytes = get_pushdata(pushdata_timelock)
                 timelock = struct.unpack('!I', timelock_bytes)[0]
             redeem_script_hash = get_pushdata(groups[1])
             address_b58 = get_address_b58_from_redeem_script_hash(redeem_script_hash)

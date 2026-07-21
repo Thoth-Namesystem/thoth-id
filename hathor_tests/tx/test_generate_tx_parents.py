@@ -1,16 +1,5 @@
-#  Copyright 2025 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from hathor.transaction import Block, Transaction
 from hathor_tests import unittest
@@ -28,7 +17,7 @@ class GenerateTxParentsTestCase(unittest.TestCase):
     def test_two_unconfirmed_genesis(self) -> None:
         parent_txs = self.manager.generate_parent_txs(timestamp=None)
         assert parent_txs.must_include == ()
-        assert parent_txs.can_include == [self._settings.GENESIS_TX1_HASH, self._settings.GENESIS_TX2_HASH]
+        assert set(parent_txs.can_include) == {self._settings.GENESIS_TX1_HASH, self._settings.GENESIS_TX2_HASH}
 
     def test_two_unconfirmed_txs(self) -> None:
         artifacts = self.dag_builder.build_from_str('''
@@ -43,8 +32,8 @@ class GenerateTxParentsTestCase(unittest.TestCase):
         assert tx1.get_metadata().first_block is None
 
         parent_txs = self.manager.generate_parent_txs(timestamp=None)
-        assert parent_txs.must_include == ()
-        assert parent_txs.can_include == [dummy.hash, tx1.hash]
+        assert parent_txs.must_include == (tx1.hash,)
+        assert parent_txs.can_include == [dummy.hash]
 
     def test_zero_unconfirmed_two_confirmed(self) -> None:
         artifacts = self.dag_builder.build_from_str('''
@@ -80,8 +69,8 @@ class GenerateTxParentsTestCase(unittest.TestCase):
         assert tx1.get_metadata().first_block == b11.hash
 
         parent_txs = self.manager.generate_parent_txs(timestamp=None)
-        assert parent_txs.must_include == (tx1.hash,)
-        assert set(parent_txs.can_include) == {dummy.hash, self._settings.GENESIS_TX1_HASH}
+        assert parent_txs.must_include == ()
+        assert parent_txs.can_include == [dummy.hash, tx1.hash]
 
     def test_one_unconfirmed_one_confirmed(self) -> None:
         artifacts = self.dag_builder.build_from_str('''
@@ -118,7 +107,7 @@ class GenerateTxParentsTestCase(unittest.TestCase):
 
         parent_txs = self.manager.generate_parent_txs(timestamp=None)
         assert parent_txs.must_include == (tx1.hash,)
-        assert set(parent_txs.can_include) == {dummy.hash, self._settings.GENESIS_TX1_HASH}
+        assert parent_txs.can_include == [dummy.hash]
 
     def test_some_confirmed_txs(self) -> None:
         artifacts = self.dag_builder.build_from_str('''
@@ -146,4 +135,4 @@ class GenerateTxParentsTestCase(unittest.TestCase):
 
         parent_txs = self.manager.generate_parent_txs(timestamp=None)
         assert parent_txs.must_include == (tx1.hash,)
-        assert parent_txs.can_include == [tx2.hash, tx5.hash]
+        assert parent_txs.can_include == [tx5.hash]

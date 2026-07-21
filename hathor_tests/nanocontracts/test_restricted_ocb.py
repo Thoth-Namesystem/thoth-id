@@ -1,16 +1,5 @@
-#  Copyright 2025 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import pytest
 from cryptography.exceptions import InvalidSignature
@@ -57,7 +46,7 @@ class TestRestrictedOCB(unittest.TestCase):
 
         assert ocb.get_blueprint_class().__name__ == 'TestBlueprint1'
         assert nc.get_nano_header().nc_id == ocb.hash
-        blueprint_class = manager.tx_storage.get_blueprint_class(BlueprintId(VertexId(ocb.hash)))
+        blueprint_class = manager.blueprint_service.get_blueprint_class(BlueprintId(VertexId(ocb.hash)))
         assert blueprint_class.__name__ == 'TestBlueprint1'
 
     def test_ocb_address_not_allowed(self) -> None:
@@ -89,7 +78,7 @@ class TestRestrictedOCB(unittest.TestCase):
 
     def test_ocb_unrestricted(self) -> None:
         builder = self.get_builder() \
-            .set_settings(self._settings._replace(NC_ON_CHAIN_BLUEPRINT_RESTRICTED=False))
+            .set_settings(self._settings.model_copy(update={'NC_ON_CHAIN_BLUEPRINT_RESTRICTED': False}))
         manager = self.create_peer_from_builder(builder)
         dag_builder = TestDAGBuilder.from_manager(manager)
         password = b'abc'
@@ -119,12 +108,12 @@ class TestRestrictedOCB(unittest.TestCase):
 
         assert ocb.get_blueprint_class().__name__ == 'TestBlueprint1'
         assert nc.get_nano_header().nc_id == ocb.hash
-        blueprint_class = manager.tx_storage.get_blueprint_class(BlueprintId(VertexId(ocb.hash)))
+        blueprint_class = manager.blueprint_service.get_blueprint_class(BlueprintId(VertexId(ocb.hash)))
         assert blueprint_class.__name__ == 'TestBlueprint1'
 
     def test_ocb_invalid_pubkey(self) -> None:
         builder = self.get_builder() \
-            .set_settings(self._settings._replace(NC_ON_CHAIN_BLUEPRINT_RESTRICTED=False))
+            .set_settings(self._settings.model_copy(update={'NC_ON_CHAIN_BLUEPRINT_RESTRICTED': False}))
         manager = self.create_peer_from_builder(builder)
         dag_builder = TestDAGBuilder.from_manager(manager)
         private_key = unittest.OCB_TEST_PRIVKEY.hex()

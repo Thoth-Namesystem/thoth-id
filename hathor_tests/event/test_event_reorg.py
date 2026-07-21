@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 from hathor.event.model.event_type import EventType
 from hathor.event.storage import EventRocksDBStorage
 from hathor.simulator.utils import add_new_blocks
@@ -86,4 +89,4 @@ class EventReorgTest(unittest.TestCase):
             self.assertEqual(EventType(actual_event.type), expected_event_type)
 
             for expected_data_key, expected_data_value in expected_partial_data.items():
-                self.assertEqual(actual_event.data.dict()[expected_data_key], expected_data_value)
+                self.assertEqual(actual_event.data.model_dump()[expected_data_key], expected_data_value)

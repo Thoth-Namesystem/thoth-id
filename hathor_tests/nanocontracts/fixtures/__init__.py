@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
+"""Test fixtures for nano contracts."""

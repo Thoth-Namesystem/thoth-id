@@ -1,16 +1,5 @@
-#  Copyright 2025 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import assert_never
 from unittest.mock import ANY
@@ -94,7 +83,7 @@ class TestFallbackMethod(BlueprintTestCase):
 
         last_call_info = self.runner.get_last_call_info()
         assert last_call_info.nc_logger.__entries__ == [
-            NCCallBeginEntry.construct(
+            NCCallBeginEntry.model_construct(
                 timestamp=ANY,
                 nc_id=self.contract_id,
                 call_type=CallType.PUBLIC,
@@ -102,7 +91,7 @@ class TestFallbackMethod(BlueprintTestCase):
                 str_args="('unknown', NCParsedArgs(args=('hello', 123), kwargs={}))",
                 actions=[dict(amount=123, token_uid='00', type='deposit')]
             ),
-            NCCallEndEntry.construct(timestamp=ANY),
+            NCCallEndEntry.model_construct(timestamp=ANY),
         ]
 
     def test_fallback_only_kwargs_success(self) -> None:
@@ -111,7 +100,7 @@ class TestFallbackMethod(BlueprintTestCase):
 
         last_call_info = self.runner.get_last_call_info()
         assert last_call_info.nc_logger.__entries__ == [
-            NCCallBeginEntry.construct(
+            NCCallBeginEntry.model_construct(
                 timestamp=ANY,
                 nc_id=self.contract_id,
                 call_type=CallType.PUBLIC,
@@ -119,7 +108,7 @@ class TestFallbackMethod(BlueprintTestCase):
                 str_args="('unknown', NCParsedArgs(args=(), kwargs={'greeting': 'hello', 'x': 123}))",
                 actions=[dict(amount=123, token_uid='00', type='deposit')]
             ),
-            NCCallEndEntry.construct(timestamp=ANY),
+            NCCallEndEntry.model_construct(timestamp=ANY),
         ]
 
     def test_fallback_args_kwargs_success(self) -> None:
@@ -128,7 +117,7 @@ class TestFallbackMethod(BlueprintTestCase):
 
         last_call_info = self.runner.get_last_call_info()
         assert last_call_info.nc_logger.__entries__ == [
-            NCCallBeginEntry.construct(
+            NCCallBeginEntry.model_construct(
                 timestamp=ANY,
                 nc_id=self.contract_id,
                 call_type=CallType.PUBLIC,
@@ -136,7 +125,7 @@ class TestFallbackMethod(BlueprintTestCase):
                 str_args="('unknown', NCParsedArgs(args=('hello',), kwargs={'x': 123}))",
                 actions=[dict(amount=123, token_uid='00', type='deposit')]
             ),
-            NCCallEndEntry.construct(timestamp=ANY),
+            NCCallEndEntry.model_construct(timestamp=ANY),
         ]
 
     def test_cannot_call_fallback_directly(self) -> None:
@@ -158,7 +147,7 @@ class TestFallbackMethod(BlueprintTestCase):
 
         last_call_info = self.runner.get_last_call_info()
         assert last_call_info.nc_logger.__entries__ == [
-            NCCallBeginEntry.construct(
+            NCCallBeginEntry.model_construct(
                 timestamp=ANY,
                 nc_id=self.contract_id,
                 call_type=CallType.PUBLIC,
@@ -166,7 +155,7 @@ class TestFallbackMethod(BlueprintTestCase):
                 str_args=f"('unknown', NCRawArgs('{args_bytes.hex()}'))",
                 actions=[dict(amount=123, token_uid='00', type='deposit')]
             ),
-            NCCallEndEntry.construct(timestamp=ANY),
+            NCCallEndEntry.model_construct(timestamp=ANY),
         ]
 
     def test_dag_fallback(self) -> None:

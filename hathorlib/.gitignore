@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
+__pycache__/
+*.py[cod]
+/dist/
+/.coverage
+/htmlcov/
+*~

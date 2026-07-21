@@ -1,16 +1,5 @@
-#  Copyright 2025 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from typing import Any
 
@@ -410,6 +399,15 @@ class BlueprintOnChainResourceTest(_BaseResourceTest._ResourceTest):
             has_more=False,
             blueprints=[],
         )
+
+    async def test_invalid_before_after_param(self) -> None:
+        # A non-hex `before`/`after` must yield a 400, not an uncaught
+        # ValueError from bytes.fromhex() that bubbles up as a 500 (see the
+        # on-call alert for mainnet fullnodes on 2026-07-06).
+        for param in (b'before', b'after'):
+            for bad_value in (b'not-hex', b'zzzz', b'abc'):
+                response = await self.web.get('on_chain', {param: bad_value})
+                self.assertEqual(400, response.responseCode)
 
     async def test_search_by_name(self) -> None:
         response = await self.web.get('builtin', {

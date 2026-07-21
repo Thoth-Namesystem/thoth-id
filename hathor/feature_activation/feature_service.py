@@ -1,16 +1,5 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
@@ -223,6 +212,33 @@ class FeatureService:
             feature: info.state
             for feature, info in feature_infos.items()
         }
+
+    def get_activation_height(self, *, block: 'Block', feature: Feature) -> int | None:
+        """Return the height of the first boundary block where `feature` became ACTIVE in
+        `block`'s chain history, or None if the feature is not yet ACTIVE for `block`.
+        """
+        interval = self._feature_settings.evaluation_interval
+        height = block.static_metadata.height
+        boundary_height = (height // interval) * interval
+        if boundary_height == 0:
+            return None
+
+        boundary_block = block if boundary_height == height else self._get_ancestor_at_height(
+            block=block, ancestor_height=boundary_height,
+        )
+        if self.get_state(block=boundary_block, feature=feature) != FeatureState.ACTIVE:
+            return None
+
+        # Walk back boundary by boundary while still ACTIVE; stop at the first non-ACTIVE one.
+        while boundary_height > interval:
+            prev_height = boundary_height - interval
+            prev_block = self._get_ancestor_at_height(block=boundary_block, ancestor_height=prev_height)
+            if self.get_state(block=prev_block, feature=feature) != FeatureState.ACTIVE:
+                return boundary_height
+            boundary_height = prev_height
+            boundary_block = prev_block
+
+        return boundary_height
 
     def _get_ancestor_at_height(self, *, block: 'Block', ancestor_height: int) -> 'Block':
         """

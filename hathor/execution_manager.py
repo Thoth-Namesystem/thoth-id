@@ -1,20 +1,11 @@
-#  Copyright 2023 Hathor Labs
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import sys
-from typing import Callable, NoReturn
+from contextlib import contextmanager
+from typing import Callable, Iterator, NoReturn
 
+import structlog
 from structlog import get_logger
 
 from hathor.reactor import ReactorProtocol
@@ -63,3 +54,12 @@ class ExecutionManager:
         self._reactor.stop()
         self._reactor.crash()
         sys.exit(-1)
+
+
+@contextmanager
+def non_critical_code(log: structlog.stdlib.BoundLogger) -> Iterator[None]:
+    """Use this context manager to ignore all exceptions in the contained code."""
+    try:
+        yield
+    except BaseException:
+        log.exception('ignoring error in non-critical code')

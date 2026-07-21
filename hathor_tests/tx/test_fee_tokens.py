@@ -1,20 +1,8 @@
-# Copyright 2025 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import pytest
 
-from hathor.conf.settings import NanoContractsSetting
 from hathor.crypto.util import decode_address
 from hathor.exception import InvalidNewTransaction
 from hathor.indexes.tokens_index import TokenUtxoInfo
@@ -29,6 +17,7 @@ from hathor.transaction.util import get_deposit_token_withdraw_amount
 from hathor_tests import unittest
 from hathor_tests.dag_builder.builder import TestDAGBuilder
 from hathor_tests.utils import add_blocks_unlock_reward, create_fee_tokens, create_tokens, get_genesis_key
+from hathorlib.conf.settings import FeatureSetting
 
 
 class FeeTokenTest(unittest.TestCase):
@@ -634,7 +623,7 @@ class FeeTokenTest(unittest.TestCase):
             'testnet',
             unlock_wallet=True,
             wallet_index=True,
-            settings=self._settings._replace(ENABLE_NANO_CONTRACTS=NanoContractsSetting.DISABLED),
+            settings=self._settings.model_copy(update={'ENABLE_FEE_BASED_TOKENS': FeatureSetting.DISABLED}),
         )
         with pytest.raises(InvalidNewTransaction) as e:
             create_fee_tokens(custom_manager, self.address_b58)

@@ -1,16 +1,5 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
@@ -25,6 +14,7 @@ from hathor.transaction.base_transaction import BaseTransaction
 if TYPE_CHECKING:  # pragma: no cover
     from hathor.conf.settings import HathorSettings
     from hathor.indexes.manager import IndexesManager
+    from hathor.transaction.storage import TransactionStorage
 
 logger = get_logger()
 
@@ -44,6 +34,18 @@ class BaseIndex(ABC):
 
         It comes with a no-op implementation by default because usually indexes will not need this.
         """
+        pass
+
+    def still_needs_initialization(self, tx_storage: 'TransactionStorage') -> bool:
+        """Return whether this index still needs to receive transactions during initialization.
+
+        This is called after ``init_start`` and after the index has been cleared, so indexes can use persisted
+        metadata to skip a known unnecessary rebuild.
+        """
+        return True
+
+    def init_finish(self, tx_storage: 'TransactionStorage') -> None:
+        """Called after initialization finishes for indexes selected at the beginning of initialization."""
         pass
 
     @abstractmethod

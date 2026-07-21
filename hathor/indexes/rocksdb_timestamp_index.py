@@ -1,18 +1,7 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
-from typing import TYPE_CHECKING, Iterator, Optional
+from typing import TYPE_CHECKING, Any, Iterator, Optional
 
 from structlog import get_logger
 
@@ -93,7 +82,7 @@ class RocksDBTimestampIndex(TimestampIndex, RocksDBIndexUtils):
         """
         if from_timestamp is None and from_tx is not None:
             raise ValueError('from_tx needs from_timestamp, but it is None')
-        it = self._db.iterkeys(self._cf)
+        it: Any = self._db.iterkeys(self._cf)
         if reverse:
             it = reversed(it)
             if from_timestamp is None:
@@ -142,3 +131,7 @@ class RocksDBTimestampIndex(TimestampIndex, RocksDBIndexUtils):
         for _, key in it:
             __, tx_hash = self._from_key(key)
             yield tx_hash
+
+    def __contains__(self, elem: tuple[int, bytes]) -> bool:
+        key = self._to_key(*elem)
+        return self._db.get((self._cf, key)) is not None

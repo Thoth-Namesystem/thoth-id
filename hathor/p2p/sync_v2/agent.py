@@ -1,16 +1,5 @@
-# Copyright 2023 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
 import base64
 import json
@@ -181,8 +170,6 @@ class NodeBlockSync(SyncAgent):
     def get_status(self) -> dict[str, Any]:
         """ Return the status of the sync.
         """
-        assert self.tx_storage.indexes is not None
-        assert self.tx_storage.indexes.mempool_tips is not None
         tips = self.tx_storage.indexes.mempool_tips.get()
         tips_limited, tips_has_more = collect_n(iter(tips), MAX_MEMPOOL_STATUS_TIPS)
         res = {
@@ -361,7 +348,6 @@ class NodeBlockSync(SyncAgent):
 
         Notice that we might already have all other peer's blocks while the other peer is still syncing.
         """
-        assert self.tx_storage.indexes is not None
         self.state = PeerState.SYNCING_BLOCKS
 
         # Get my best block.
@@ -462,8 +448,6 @@ class NodeBlockSync(SyncAgent):
     def handle_get_tips(self, _payload: str) -> None:
         """ Handle a GET-TIPS message.
         """
-        assert self.tx_storage.indexes is not None
-        assert self.tx_storage.indexes.mempool_tips is not None
         if self._is_streaming:
             self.log.warn('can\'t send while streaming')  # XXX: or can we?
             self.send_message(ProtocolMessages.MEMPOOL_END)
@@ -641,7 +625,6 @@ class NodeBlockSync(SyncAgent):
     def handle_get_peer_block_hashes(self, payload: str) -> None:
         """ Handle a GET-PEER-BLOCK-HASHES message.
         """
-        assert self.tx_storage.indexes is not None
         heights = json.loads(payload)
         if len(heights) > 20:
             self.log.info('too many heights', heights_qty=len(heights))
@@ -677,7 +660,7 @@ class NodeBlockSync(SyncAgent):
             end_hash=end_hash,
             quantity=quantity,
         )
-        self.send_message(ProtocolMessages.GET_NEXT_BLOCKS, payload.json())
+        self.send_message(ProtocolMessages.GET_NEXT_BLOCKS, payload.model_dump_json())
         self.receiving_stream = True
 
     def handle_get_next_blocks(self, payload: str) -> None:
@@ -687,7 +670,7 @@ class NodeBlockSync(SyncAgent):
         if self._is_streaming:
             self.protocol.send_error_and_close_connection('GET-NEXT-BLOCKS received before previous one finished')
             return
-        data = GetNextBlocksPayload.parse_raw(payload)
+        data = GetNextBlocksPayload.model_validate_json(payload)
         start_block = self._validate_block(data.start_hash)
         if start_block is None:
             return
@@ -756,12 +739,13 @@ class NodeBlockSync(SyncAgent):
         self.receiving_stream = False
         assert self.protocol.connections is not None
 
-        if self.state is not PeerState.SYNCING_BLOCKS:
-            self.log.error('unexpected BLOCKS-END', state=self.state, response_code=response_code.name)
-            self.protocol.send_error_and_close_connection('Not expecting to receive BLOCKS-END message')
+        if self.state is not PeerState.SYNCING_BLOCKS or self._blk_streaming_client is None:
+            # A stale BLOCKS-END can arrive after we already finished or aborted this stream and
+            # moved on (e.g. after a reorg-driven retry). It is harmless, so we ignore it instead
+            # of closing the connection, which would trigger a needless reconnect.
+            self.log.debug('ignoring unexpected BLOCKS-END', state=self.state, response_code=response_code.name)
             return
 
-        assert self._blk_streaming_client is not None
         self._blk_streaming_client.handle_blocks_end(response_code)
         self.log.debug('block streaming ended', reason=str(response_code))
 
@@ -848,12 +832,12 @@ class NodeBlockSync(SyncAgent):
             block=best_block.hash,
             height=best_block.static_metadata.height,
         )
-        self.send_message(ProtocolMessages.BEST_BLOCK, payload.json())
+        self.send_message(ProtocolMessages.BEST_BLOCK, payload.model_dump_json())
 
     def handle_best_block(self, payload: str) -> None:
         """ Handle a BEST-BLOCK message.
         """
-        data = BestBlockPayload.parse_raw(payload)
+        data = BestBlockPayload.model_validate_json(payload)
         best_block = _HeightInfo(height=data.height, id=data.block)
 
         deferred = self._deferred_best_block
@@ -927,7 +911,7 @@ class NodeBlockSync(SyncAgent):
             first_block_hash=first_block_hash,
             last_block_hash=last_block_hash,
         )
-        self.send_message(ProtocolMessages.GET_TRANSACTIONS_BFS, payload.json())
+        self.send_message(ProtocolMessages.GET_TRANSACTIONS_BFS, payload.model_dump_json())
         self.receiving_stream = True
 
     def handle_get_transactions_bfs(self, payload: str) -> None:
@@ -936,7 +920,7 @@ class NodeBlockSync(SyncAgent):
         if self._is_streaming:
             self.log.warn('ignore GET-TRANSACTIONS-BFS, already streaming')
             return
-        data = GetTransactionsBFSPayload.parse_raw(payload)
+        data = GetTransactionsBFSPayload.model_validate_json(payload)
 
         if len(data.start_from) > MAX_GET_TRANSACTIONS_BFS_LEN:
             self.log.error('too many transactions in GET-TRANSACTIONS-BFS', state=self.state)
@@ -1010,12 +994,14 @@ class NodeBlockSync(SyncAgent):
         self.receiving_stream = False
         assert self.protocol.connections is not None
 
-        if self.state is not PeerState.SYNCING_TRANSACTIONS:
-            self.log.error('unexpected TRANSACTIONS-END', state=self.state, response_code=response_code.name)
-            self.protocol.send_error_and_close_connection('Not expecting to receive TRANSACTIONS-END message')
+        if self.state is not PeerState.SYNCING_TRANSACTIONS or self._tx_streaming_client is None:
+            # A stale TRANSACTIONS-END can arrive after we already finished or aborted this stream
+            # and moved on (e.g. after a reorg-driven retry). It is harmless, so we ignore it
+            # instead of closing the connection, which would trigger a needless reconnect.
+            self.log.debug('ignoring unexpected TRANSACTIONS-END', state=self.state,
+                           response_code=response_code.name)
             return
 
-        assert self._tx_streaming_client is not None
         self._tx_streaming_client.handle_transactions_end(response_code)
         self.log.debug('transaction streaming ended', reason=str(response_code))
 

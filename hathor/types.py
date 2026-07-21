@@ -1,18 +1,7 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
 
-from typing import TypeAlias
+from typing import NewType, TypeAlias
 
 # XXX: All of these types already have an equivalent NewType available on `hathor.nanoconracts.types`, the next step is
 #      to refactor the places which use `hathor.types`, which is still a lot. Some of these would also benefit from
@@ -24,6 +13,8 @@ Amount: TypeAlias = int            # NewType('Amount', int)
 Timestamp: TypeAlias = int         # NewType('Timestamp', int)
 TxOutputScript: TypeAlias = bytes  # NewType('TxOutputScript', bytes)
 VertexId: TypeAlias = bytes        # NewType('VertexId', bytes)
+BlockId = NewType('BlockId', VertexId)
+TransactionId = NewType('TransactionId', VertexId)
 TokenUid: TypeAlias = VertexId     # NewType('TokenUid', VertexId)
 
 

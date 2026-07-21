@@ -1,16 +1,6 @@
-# Copyright 2021 Hathor Labs
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-FileCopyrightText: Hathor Labs
+# SPDX-License-Identifier: Apache-2.0
+
 """
 This module exposes three peer classes that share similar behavior but must not be mixed.
 
@@ -54,7 +44,7 @@ from typing_extensions import Self
 
 from hathor.conf.get_settings import get_global_settings
 from hathor.conf.settings import HathorSettings
-from hathor.daa import DifficultyAdjustmentAlgorithm
+from hathor.daa import DAAFactory
 from hathor.p2p.peer_endpoint import PeerAddress, PeerEndpoint
 from hathor.p2p.peer_id import PeerId
 from hathor.p2p.utils import discover_dns, generate_certificate
@@ -152,7 +142,7 @@ class PeerInfo:
                 if protocol.entrypoint.addr == entrypoint:
                     return True
                 # TODO: don't use `daa.TEST_MODE` for this
-                test_mode = not_none(DifficultyAdjustmentAlgorithm.singleton).TEST_MODE
+                test_mode = not_none(DAAFactory.singleton).TEST_MODE
                 result = await discover_dns(entrypoint.host, test_mode)
                 if protocol.entrypoint.addr in [endpoint.addr for endpoint in result]:
                     return True
@@ -168,7 +158,7 @@ class PeerInfo:
                 # So we must consider that the entrypoint could be in name format and we just validate the host
                 if connection_host == entrypoint.host:
                     return True
-                test_mode = not_none(DifficultyAdjustmentAlgorithm.singleton).TEST_MODE
+                test_mode = not_none(DAAFactory.singleton).TEST_MODE
                 result = await discover_dns(entrypoint.host, test_mode)
                 if connection_host in [entrypoint.addr.host for entrypoint in result]:
                     return True
