@@ -1,5 +1,6 @@
 from typing import NamedTuple
 from hathor import (
+    HATHOR_TOKEN_UID,
     Blueprint,
     BlueprintId,
     Context,
@@ -14,8 +15,6 @@ from hathor import (
     view,
     export
 )
-
-HTR_UID = b'\x00'
 
 
 SECONDS_PER_YEAR = 365 * 24 * 60 * 60
@@ -968,7 +967,7 @@ class ThothNamer(Blueprint):
         action = next(iter(ctx.actions.values()))[0]
         if ctx.caller_id != self.dev_address and action.type == NCActionType.WITHDRAWAL:
             raise WithdrawalNotAllowed('Only dev can withdraw.')
-        if action.token_uid != HTR_UID:
+        if action.token_uid != HATHOR_TOKEN_UID:
             raise InvalidToken('Token different from HTR.')
         return action
     
