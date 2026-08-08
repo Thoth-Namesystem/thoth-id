@@ -929,7 +929,8 @@ class ThothNamer(Blueprint):
     def _mint_name_nft(self, name: str, token_symbol: str, timestamp: Timestamp) -> TokenUid:
         """Mint a new NFT for the name and return its UID."""
         # Create NFT metadata
-        nft_name = f'{name[:26]}.{self.domain}'
+        name_slice = name[:26]
+        nft_name = f'{name_slice}.{self.domain}'
         
         token_uid = self.syscall.create_deposit_token(
             token_name=nft_name, 
@@ -962,7 +963,7 @@ class ThothNamer(Blueprint):
 
     def _get_action(self, ctx: Context) -> NCAction:
         """Return the only action available; fails otherwise."""
-        if len(ctx.actions) != 1:
+        if len(ctx.actions_list) != 1:
             raise TooManyActions('Only one action supported.')
         action = next(iter(ctx.actions.values()))[0]
         if ctx.caller_id != self.dev_address and action.type == NCActionType.WITHDRAWAL:
@@ -975,7 +976,7 @@ class ThothNamer(Blueprint):
                                    token_uid: TokenUid,
                                    action_type: NCActionType) -> None:
         """Check if the action record token is HTR."""
-        if len(ctx.actions) != 1:
+        if len(ctx.actions_list) != 1:
             raise TooManyActions('Only one action supported.')
         action = next(iter(ctx.actions.values()))[0]
         if action.type != action_type:
