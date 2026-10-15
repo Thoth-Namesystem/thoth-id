@@ -14,7 +14,14 @@ from hathor.nanocontracts.blueprints.thoth_namer import (
     DEFAULT_MAX_TOKEN_SYMBOL_LENGTH,
     DEFAULT_MAX_TOTAL_PROFILE_SIZE,
     DEFAULT_GRACE_PERIOD_DAYS,
-    DEFAULT_MAX_MANAGED_NAMES
+    DEFAULT_MAX_MANAGED_NAMES,
+    MAX_PROFILE_DATA_ENTRIES_CAP,
+    MAX_PROFILE_KEY_LENGTH_CAP,
+    MAX_PROFILE_VALUE_LENGTH_CAP,
+    MAX_TOKEN_SYMBOL_LENGTH_CAP,
+    MAX_TOTAL_PROFILE_SIZE_CAP,
+    MAX_GRACE_PERIOD_DAYS_CAP,
+    MAX_MANAGED_NAMES_CAP
 )
 
 settings = HathorSettings()
@@ -265,6 +272,11 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         # Test invalid key format
         with self.assertNCFail('InvalidDataKey'):
             self.runner.call_public_method(self.nc_id, 'update_profile_data', context, name, "invalid@key", "value")
+
+        # Test non-ASCII keys are rejected, including characters whose isalnum() differs across Python versions
+        for non_ascii_key in ["\U0001e4d0", "chave_é", "ключ", "key\u0663"]:
+            with self.assertNCFail('InvalidDataKey'):
+                self.runner.call_public_method(self.nc_id, 'update_profile_data', context, name, non_ascii_key, "value")
             
         # Test too long key
         with self.assertNCFail('InvalidDataKey'):
@@ -354,6 +366,72 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         context = self.create_context(caller_id=Address(self.dev_address))
         self.runner.call_public_method(self.nc_id, 'change_dev_address', context, new_dev_address)
         self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_dev_address'), get_address_b58_from_bytes(new_dev_address))
+
+    def test_limit_hard_caps(self):
+        """Every configurable limit must be within 1 and its hard cap, both on initialize and on change."""
+        # (init arg, cap, error, setter, getter)
+        limits = [
+            ('max_profile_data_entries', MAX_PROFILE_DATA_ENTRIES_CAP, 'InvalidMaxProfileDataEntries',
+             'change_max_profile_data_entries', 'get_max_profile_data_entries'),
+            ('max_profile_key_length', MAX_PROFILE_KEY_LENGTH_CAP, 'InvalidMaxProfileKeyLength',
+             'change_max_profile_key_length', 'get_max_profile_key_length'),
+            ('max_profile_value_length', MAX_PROFILE_VALUE_LENGTH_CAP, 'InvalidMaxProfileValueLength',
+             'change_max_profile_value_length', 'get_max_profile_value_length'),
+            ('max_token_symbol_length', MAX_TOKEN_SYMBOL_LENGTH_CAP, 'InvalidMaxTokenSymbolLength',
+             'change_max_token_symbol_length', 'get_max_token_symbol_length'),
+            ('max_total_profile_size', MAX_TOTAL_PROFILE_SIZE_CAP, 'InvalidMaxTotalProfileSize',
+             'change_max_total_profile_size', 'get_max_total_profile_size'),
+            ('grace_period_days', MAX_GRACE_PERIOD_DAYS_CAP, 'InvalidGracePeriodDays',
+             'change_grace_period_days', 'get_grace_period_days'),
+            ('max_managed_names', MAX_MANAGED_NAMES_CAP, 'InvalidMaxManagedNames',
+             'change_max_managed_names', 'get_max_managed_names'),
+        ]
+        dev_context = self.create_context(caller_id=Address(self.dev_address))
+        default_args = {
+            'max_profile_data_entries': self.max_profile_data_entries,
+            'max_profile_key_length': self.max_profile_key_length,
+            'max_profile_value_length': self.max_profile_value_length,
+            'max_token_symbol_length': self.max_token_symbol_length,
+            'max_total_profile_size': self.max_total_profile_size,
+            'grace_period_days': self.grace_period_days,
+            'max_managed_names': self.max_managed_names,
+        }
+
+        def create(**overrides):
+            args = {**default_args, **overrides}
+            nc_id = self.gen_random_contract_id()
+            self.runner.create_contract(
+                nc_id, self.blueprint_id, dev_context, "htr", self.registration_fee,
+                args['max_profile_data_entries'], args['max_profile_key_length'],
+                args['max_profile_value_length'], args['max_token_symbol_length'],
+                args['max_total_profile_size'], args['grace_period_days'],
+                args['max_managed_names'],
+            )
+            return nc_id
+
+        for arg, cap, error, setter, getter in limits:
+            with self.subTest(limit=arg):
+                # initialize rejects out-of-range values
+                with self.assertNCFail(error):
+                    create(**{arg: 0})
+                with self.assertNCFail(error):
+                    create(**{arg: cap + 1})
+
+                # initialize accepts exactly the cap
+                nc_id = create(**{arg: cap})
+                self.assertEqual(self.runner.call_view_method(nc_id, getter), cap)
+
+                # setter rejects out-of-range values
+                nc_id = create()
+                with self.assertNCFail(error):
+                    self.runner.call_public_method(nc_id, setter, dev_context, 0)
+                with self.assertNCFail(error):
+                    self.runner.call_public_method(nc_id, setter, dev_context, cap + 1)
+                self.assertEqual(self.runner.call_view_method(nc_id, getter), default_args[arg])
+
+                # setter accepts exactly the cap
+                self.runner.call_public_method(nc_id, setter, dev_context, cap)
+                self.assertEqual(self.runner.call_view_method(nc_id, getter), cap)
 
     def test_dev_config_changes(self):
         """Test dev-only configuration changes."""
@@ -654,6 +732,28 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
         if return_key:
             return address_bytes, key
         return address_bytes
+
+    def test_nft_salt_realistic_timestamp_and_same_block(self):
+        """NFTs minted at a real-world timestamp, in the same block and with the same symbol, get distinct UIDs."""
+        self.initialize_contract()
+
+        # Move the clock to a realistic block timestamp
+        realistic_timestamp = 1_700_000_000
+        self.clock.advance(realistic_timestamp - self.get_current_timestamp())
+        self.assertEqual(self.get_current_timestamp(), realistic_timestamp)
+
+        # Two names registered in the same block with the same token symbol
+        fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', "same-block-a")
+        self._register_name("same-block-a", fee, token_symbol="SAME")
+        self._register_name("same-block-b", fee, token_symbol="SAME")
+
+        data_a = self.runner.call_view_method(self.nc_id, 'get_name_data', "same-block-a")
+        data_b = self.runner.call_view_method(self.nc_id, 'get_name_data', "same-block-b")
+        self.assertNotEqual(data_a['token_uid'], data_b['token_uid'])
+        self.assertEqual(
+            self.runner.call_view_method(self.nc_id, 'get_name_expiration_date', "same-block-a"),
+            realistic_timestamp + 365 * 24 * 60 * 60
+        )
 
     # ==================== Profile Data View Tests ====================
 

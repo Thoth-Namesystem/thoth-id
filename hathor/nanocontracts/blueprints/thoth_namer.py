@@ -29,6 +29,17 @@ DEFAULT_MAX_TOKEN_SYMBOL_LENGTH = 5
 DEFAULT_MAX_TOTAL_PROFILE_SIZE = 10000
 DEFAULT_GRACE_PERIOD_DAYS = 30
 
+# Hard upper bounds for configurable limits. These are fixed in code so that
+# every loop and list copy over profile keys and managed names stays bounded,
+# regardless of what the dev configures.
+MAX_PROFILE_DATA_ENTRIES_CAP = 50
+MAX_PROFILE_KEY_LENGTH_CAP = 100
+MAX_PROFILE_VALUE_LENGTH_CAP = 1000
+MAX_TOKEN_SYMBOL_LENGTH_CAP = 5
+MAX_TOTAL_PROFILE_SIZE_CAP = 50000
+MAX_GRACE_PERIOD_DAYS_CAP = 365
+MAX_MANAGED_NAMES_CAP = 500
+
 
 class NameRecord(NamedTuple):
     """Record for storing name data and NFT information"""
@@ -141,6 +152,21 @@ class ThothNamer(Blueprint):
         self.total_fee = 0
         self.dev_address = ctx.caller_id
         
+        self._check_limit(max_profile_data_entries, MAX_PROFILE_DATA_ENTRIES_CAP,
+                          InvalidMaxProfileDataEntries, 'Maximum number of profile data entries')
+        self._check_limit(max_profile_key_length, MAX_PROFILE_KEY_LENGTH_CAP,
+                          InvalidMaxProfileKeyLength, 'Maximum length of profile data keys')
+        self._check_limit(max_profile_value_length, MAX_PROFILE_VALUE_LENGTH_CAP,
+                          InvalidMaxProfileValueLength, 'Maximum length of profile data values')
+        self._check_limit(max_token_symbol_length, MAX_TOKEN_SYMBOL_LENGTH_CAP,
+                          InvalidMaxTokenSymbolLength, 'Maximum length of token symbols')
+        self._check_limit(max_total_profile_size, MAX_TOTAL_PROFILE_SIZE_CAP,
+                          InvalidMaxTotalProfileSize, 'Maximum total size of all profile data')
+        self._check_limit(grace_period_days, MAX_GRACE_PERIOD_DAYS_CAP,
+                          InvalidGracePeriodDays, 'Grace period days')
+        self._check_limit(max_managed_names, MAX_MANAGED_NAMES_CAP,
+                          InvalidMaxManagedNames, 'Maximum number of managed names')
+
         self.fee_multiplier: dict[int, int] = {
             3: 20,
             4: 10,
@@ -460,48 +486,42 @@ class ThothNamer(Blueprint):
     def change_max_profile_data_entries(self, ctx: Context, new_max_profile_data_entries: int) -> None:
         """Change the maximum number of profile data entries."""
         self._only_dev(ctx)
-        if new_max_profile_data_entries <= 0:
-            raise InvalidMaxProfileDataEntries('Maximum number of profile data entries must be a positive value.')
+        self._check_limit(new_max_profile_data_entries, MAX_PROFILE_DATA_ENTRIES_CAP, InvalidMaxProfileDataEntries, 'Maximum number of profile data entries')
         self.max_profile_data_entries = new_max_profile_data_entries
 
     @public(allow_actions=False)
     def change_max_profile_key_length(self, ctx: Context, new_max_profile_key_length: int) -> None:
         """Change the maximum length of profile data keys."""
         self._only_dev(ctx)
-        if new_max_profile_key_length <= 0:
-            raise InvalidMaxProfileKeyLength('Maximum length of profile data keys must be a positive value.')
+        self._check_limit(new_max_profile_key_length, MAX_PROFILE_KEY_LENGTH_CAP, InvalidMaxProfileKeyLength, 'Maximum length of profile data keys')
         self.max_profile_key_length = new_max_profile_key_length
 
     @public(allow_actions=False)
     def change_max_profile_value_length(self, ctx: Context, new_max_profile_value_length: int) -> None:
         """Change the maximum length of profile data values."""
         self._only_dev(ctx)
-        if new_max_profile_value_length <= 0:
-            raise InvalidMaxProfileValueLength('Maximum length of profile data values must be a positive value.')
+        self._check_limit(new_max_profile_value_length, MAX_PROFILE_VALUE_LENGTH_CAP, InvalidMaxProfileValueLength, 'Maximum length of profile data values')
         self.max_profile_value_length = new_max_profile_value_length
 
     @public(allow_actions=False)
     def change_max_token_symbol_length(self, ctx: Context, new_max_token_symbol_length: int) -> None:
         """Change the maximum length of token symbols."""
         self._only_dev(ctx)
-        if new_max_token_symbol_length <= 0:
-            raise InvalidMaxTokenSymbolLength('Maximum length of token symbols must be a positive value.')
+        self._check_limit(new_max_token_symbol_length, MAX_TOKEN_SYMBOL_LENGTH_CAP, InvalidMaxTokenSymbolLength, 'Maximum length of token symbols')
         self.max_token_symbol_length = new_max_token_symbol_length
 
     @public(allow_actions=False)
     def change_max_total_profile_size(self, ctx: Context, new_max_total_profile_size: int) -> None:
         """Change the maximum total size of all profile data."""
         self._only_dev(ctx)
-        if new_max_total_profile_size <= 0:
-            raise InvalidMaxTotalProfileSize('Maximum total size of all profile data must be a positive value.')
+        self._check_limit(new_max_total_profile_size, MAX_TOTAL_PROFILE_SIZE_CAP, InvalidMaxTotalProfileSize, 'Maximum total size of all profile data')
         self.max_total_profile_size = new_max_total_profile_size
 
     @public(allow_actions=False)
     def change_grace_period_days(self, ctx: Context, new_grace_period_days: int) -> None:
         """Change the grace period days."""
         self._only_dev(ctx)
-        if new_grace_period_days <= 0:
-            raise InvalidGracePeriodDays('Grace period days must be a positive value.')
+        self._check_limit(new_grace_period_days, MAX_GRACE_PERIOD_DAYS_CAP, InvalidGracePeriodDays, 'Grace period days')
         self.grace_period_days = new_grace_period_days
 
     @public(allow_actions=False)
@@ -520,8 +540,7 @@ class ThothNamer(Blueprint):
             CannotDecreaseLimit: If new limit is lower than current limit
         """
         self._only_dev(ctx)
-        if new_max_managed_names <= 0:
-            raise InvalidMaxManagedNames('Maximum number of managed names must be a positive value.')
+        self._check_limit(new_max_managed_names, MAX_MANAGED_NAMES_CAP, InvalidMaxManagedNames, 'Maximum number of managed names')
         if new_max_managed_names < self.max_managed_names:
             raise CannotDecreaseLimit(f'Cannot decrease limit from {self.max_managed_names} to {new_max_managed_names}. The limit can only be increased.')
         self.max_managed_names = new_max_managed_names
@@ -718,7 +737,7 @@ class ThothNamer(Blueprint):
         
         Rules:
         - Key must be 1-50 characters
-        - Key must be alphanumeric with underscores
+        - Key must be ASCII alphanumeric with underscores
         - Value must be 1-1000 characters
         - Value must be valid UTF-8
         - No control characters allowed (except newline, tab)
@@ -727,8 +746,8 @@ class ThothNamer(Blueprint):
         if not isinstance(key, str) or not key or len(key) > self.max_profile_key_length:
             raise InvalidDataKey(f'Key must be between 1 and {self.max_profile_key_length} characters')
         
-        # Only allow alphanumeric and underscores in keys
-        if not key.replace('_', '').isalnum():
+        # Only allow ASCII alphanumeric and underscores in keys.
+        if not key.isascii() or not key.replace('_', '').isalnum():
             raise InvalidDataKey('Key must contain only letters, numbers, and underscores')
         
         # Validate value
@@ -921,6 +940,11 @@ class ThothNamer(Blueprint):
         """
         return self.max_managed_names
 
+    def _check_limit(self, value: int, cap: int, error, label: str) -> None:
+        """Ensure a configurable limit is within 1 and its hard cap."""
+        if not (0 < value <= cap):
+            raise error(f'{label} must be between 1 and {cap}.')
+
     def _only_dev(self, ctx: Context) -> None:
         """Check if the caller is the developer."""
         if ctx.caller_id != self.dev_address:
@@ -938,7 +962,7 @@ class ThothNamer(Blueprint):
             amount=1,
             melt_authority=True,
             mint_authority=True,
-            salt=bytes(timestamp)
+            salt=name.encode() + timestamp.to_bytes(8, 'big')
         )
         
         # Return the token UID
