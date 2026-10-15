@@ -460,6 +460,21 @@ class ThothNamer(Blueprint):
             raise InvalidFee('Fee must be a positive value.')
         self.base_fee = new_fee
 
+    @public(allow_deposit=False, allow_withdrawal=True)
+    def withdraw_fees(self, ctx: Context) -> None:
+        """Withdraw collected HTR fees to the dev.
+
+        Only the dev can call this, with a single HTR withdrawal action whose
+        amount does not exceed the contract's HTR balance.
+        """
+        self._only_dev(ctx)
+        action = self._get_action(ctx)
+        if action.type != NCActionType.WITHDRAWAL:
+            raise InvalidActionType('Action type must be WITHDRAWAL.')
+        balance = self.syscall.get_balance_before_current_call(HATHOR_TOKEN_UID)
+        if action.amount > balance:
+            raise InsufficientBalance(f'Withdrawal amount exceeds contract HTR balance ({balance}).')
+
     @public(allow_actions=False)
     def change_dev_address(self, ctx: Context, new_dev_address: Address) -> None:
         """Change the dev address."""
@@ -759,6 +774,11 @@ class ThothNamer(Blueprint):
             raise InvalidDataValue('Value contains invalid control characters')
             
         return True
+
+    @view
+    def get_htr_balance(self) -> Amount:
+        """Get the contract's HTR balance, i.e. the fees available to withdraw."""
+        return self.syscall.get_current_balance(HATHOR_TOKEN_UID)
 
     @view
     def get_dev_address(self) -> str:

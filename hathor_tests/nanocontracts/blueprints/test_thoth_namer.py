@@ -433,6 +433,55 @@ class NCThothNamerBlueprintTestCase(BlueprintTestCase):
                 self.runner.call_public_method(nc_id, setter, dev_context, cap)
                 self.assertEqual(self.runner.call_view_method(nc_id, getter), cap)
 
+    def test_withdraw_fees(self):
+        """Only the dev can withdraw collected HTR fees, up to the contract's HTR balance."""
+        self.initialize_contract()
+        dev_address = Address(self.dev_address)
+
+        # Collect fees: one 5+ char name for 2 years
+        name = "feename"
+        fee = self.runner.call_view_method(self.nc_id, 'calculate_fee', name)
+        self._register_name(name, fee * 2, token_symbol="FEE")
+        balance = self.runner.call_view_method(self.nc_id, 'get_htr_balance')
+        self.assertGreater(balance, 0)
+        self.assertLessEqual(balance, fee * 2)  # minting the NFT uses part of the deposit
+
+        def withdraw(caller, amount, token_uid=None):
+            context = self.create_context(
+                actions=[NCWithdrawalAction(token_uid=token_uid or self.token_uid, amount=amount)],
+                caller_id=caller,
+                timestamp=self.get_current_timestamp(),
+            )
+            self.runner.call_public_method(self.nc_id, 'withdraw_fees', context)
+
+        # Non-dev cannot withdraw
+        other_address, _ = self.gen_random_address_with_key()
+        with self.assertNCFail('NotAuthorized'):
+            withdraw(Address(other_address), 1)
+
+        # Cannot withdraw more than the balance
+        with self.assertNCFail('InsufficientBalance'):
+            withdraw(dev_address, balance + 1)
+
+        # Cannot withdraw a non-HTR token (the name NFT)
+        token_uid = bytes.fromhex(self.runner.call_view_method(self.nc_id, 'get_name_data', name)['token_uid'])
+        with self.assertNCFail('InvalidToken'):
+            withdraw(dev_address, 1, token_uid=token_uid)
+
+        # Deposits are rejected
+        deposit_context = self.create_context(
+            actions=[NCDepositAction(token_uid=self.token_uid, amount=1)],
+            caller_id=dev_address,
+        )
+        with self.assertNCFail('NCForbiddenAction'):
+            self.runner.call_public_method(self.nc_id, 'withdraw_fees', deposit_context)
+
+        # Partial then full withdrawal
+        withdraw(dev_address, 1)
+        self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_htr_balance'), balance - 1)
+        withdraw(dev_address, balance - 1)
+        self.assertEqual(self.runner.call_view_method(self.nc_id, 'get_htr_balance'), 0)
+
     def test_dev_config_changes(self):
         """Test dev-only configuration changes."""
         self.initialize_contract()
